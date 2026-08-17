@@ -33,15 +33,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab }) => 
   const fetchData = async () => {
     try {
       if (activeTab === "overview") {
-        const statsRes = await api.get("/hospital/admin/stats");
+        const statsRes = await api.get("/admin/stats");
         setStats(statsRes.data);
       } else if (activeTab === "audit-logs") {
-        const logRes = await api.get("/hospital/admin/audit-logs");
+        const logRes = await api.get("/admin/audit-logs");
         setAuditLogs(logRes.data);
       } else if (activeTab === "users") {
-        const docRes = await api.get("/hospital/doctors");
+        const docRes = await api.get("/doctors");
         setDoctors(docRes.data);
-        const deptRes = await api.get("/hospital/departments");
+        const deptRes = await api.get("/departments");
         setDepartments(deptRes.data);
       }
     } catch (err) {
@@ -53,7 +53,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ activeTab }) => 
     e.preventDefault();
     setDocLoading(true);
     try {
-      await api.post("/hospital/doctors", newDoctor);
+      await api.post("/doctors", newDoctor);
       setShowAddDoctorModal(false);
       setNewDoctor({
         name: "",

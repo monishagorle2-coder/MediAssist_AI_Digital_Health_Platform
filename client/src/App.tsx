@@ -32,7 +32,7 @@ const MainApp: React.FC = () => {
   const getDefaultTabForRole = () => {
     switch (user.role) {
       case "PATIENT":
-        return ["appointments", "reports", "prescriptions", "ai-assistant"].includes(activeTab) ? activeTab : "appointments";
+        return ["appointments", "reports", "prescriptions", "vitals", "profile", "ai-assistant"].includes(activeTab) ? activeTab : "appointments";
       case "DOCTOR":
         return ["queue", "ai-decision-support", "prescriptions"].includes(activeTab) ? activeTab : "queue";
       case "RECEPTIONIST":

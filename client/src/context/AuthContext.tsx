@@ -78,7 +78,7 @@ export const AuthProvider: React.FC<{
     // Real backend authentication
     try {
       const response = await api.get("/auth/me");
-      setUser(response.data.user);
+      setUser(response.data.user ?? response.data);
     } catch (error) {
       console.error("Failed to fetch user context", error);
       localStorage.removeItem("mediassist_token");

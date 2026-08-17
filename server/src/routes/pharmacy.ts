@@ -9,29 +9,84 @@ const CreatePrescriptionSchema = z.object({
   appointmentId: z.string().optional(),
   patientId: z.string(),
   diagnosisRecordId: z.string().optional(),
-  medicines: z.array(z.object({
-    medicineId: z.string().optional(),
-    medicineName: z.string(),
-    dosage: z.string(),
-    frequency: z.string(),
-    duration: z.string(),
-    quantity: z.number().int().positive().default(10),
-  })),
+  medicines: z.array(
+    z.object({
+      medicineId: z.string().optional(),
+      medicineName: z.string(),
+      dosage: z.string(),
+      frequency: z.string(),
+      duration: z.string(),
+      quantity: z.number().int().positive().default(10),
+    })
+  ),
   notes: z.string().optional(),
 });
 
 const AddMedicineSchema = z.object({
   name: z.string().min(1),
+  genericName: z.string().optional(),
   category: z.string().min(1),
+  manufacturer: z.string().optional(),
+  batchNumber: z.string().optional(),
+  expiryDate: z.string().optional().refine(
+    (val) => !val || !isNaN(new Date(val).getTime()),
+    { message: "Invalid expiry date format" }
+  ),
   stock: z.number().int().nonnegative(),
   unit: z.string().min(1),
   minStockLimit: z.number().int().positive().default(10),
   price: z.number().positive(),
 });
 
+const UpdateMedicineSchema = z.object({
+  name: z.string().min(1).optional(),
+  genericName: z.string().optional(),
+  category: z.string().min(1).optional(),
+  manufacturer: z.string().optional(),
+  batchNumber: z.string().optional(),
+  expiryDate: z.string().optional().nullable().refine(
+    (val) => !val || !isNaN(new Date(val).getTime()),
+    { message: "Invalid expiry date format" }
+  ),
+  stock: z.number().int().nonnegative().optional(),
+  unit: z.string().min(1).optional(),
+  minStockLimit: z.number().int().positive().optional(),
+  price: z.number().positive().optional(),
+});
+
 const UpdateStockSchema = z.object({
   stock: z.number().int().nonnegative(),
 });
+
+// Helper: Enrich medicine with expiry and stock status
+const enrichMedicine = (med: any) => {
+  const now = new Date();
+  let isExpired = false;
+  let isNearExpiry = false;
+  let daysUntilExpiry: number | undefined = undefined;
+
+  if (med.expiryDate) {
+    const exp = new Date(med.expiryDate);
+    const diffTime = exp.getTime() - now.getTime();
+    daysUntilExpiry = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffTime < 0) {
+      isExpired = true;
+    } else if (daysUntilExpiry <= 30) {
+      isNearExpiry = true;
+    }
+  }
+
+  const isLowStock = med.stock <= med.minStockLimit;
+
+  return {
+    ...med,
+    isExpired,
+    isNearExpiry,
+    isLowStock,
+    daysUntilExpiry,
+  };
+};
 
 // Create Prescription (Doctor Only)
 router.post("/prescriptions", authenticateToken as any, requireRoles(["DOCTOR"]), async (req: AuthenticatedRequest, res: Response) => {
@@ -49,9 +104,10 @@ router.post("/prescriptions", authenticateToken as any, requireRoles(["DOCTOR"])
         patientId: validated.patientId,
         doctorId,
         diagnosisRecordId: validated.diagnosisRecordId || null,
-        medicines: typeof validated.medicines === "string"
-          ? validated.medicines
-          : JSON.stringify(validated.medicines),
+        medicines:
+          typeof validated.medicines === "string"
+            ? validated.medicines
+            : JSON.stringify(validated.medicines),
         notes: validated.notes,
         status: "PENDING",
       },
@@ -99,7 +155,7 @@ router.get("/prescriptions", authenticateToken as any, async (req: Authenticated
 
     const formatted = prescriptions.map((p: any) => ({
       ...p,
-      medicines: typeof p.medicines === "string" ? JSON.parse(p.medicines) : p.medicines
+      medicines: typeof p.medicines === "string" ? JSON.parse(p.medicines) : p.medicines,
     }));
 
     res.json(formatted);
@@ -108,14 +164,14 @@ router.get("/prescriptions", authenticateToken as any, async (req: Authenticated
   }
 });
 
-// Dispense Prescription (Pharmacist Only)
+// Dispense Prescription with Expiry & Stock Validation (Pharmacist Only)
 router.put("/prescriptions/:id/dispense", authenticateToken as any, requireRoles(["PHARMACIST"]), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
 
     const prescription = await prisma.prescription.findUnique({
       where: { id },
-      include: { patient: true }
+      include: { patient: true },
     });
 
     if (!prescription) {
@@ -126,64 +182,95 @@ router.put("/prescriptions/:id/dispense", authenticateToken as any, requireRoles
       return res.status(400).json({ error: "Prescription is already dispensed" });
     }
 
-    const medicinesList = typeof prescription.medicines === "string" 
-      ? JSON.parse(prescription.medicines) 
-      : (prescription.medicines as any[]);
+    const medicinesList =
+      typeof prescription.medicines === "string"
+        ? JSON.parse(prescription.medicines)
+        : (prescription.medicines as any[]);
 
-    // Transaction to update status, decrement stock, and add bill charges
+    const now = new Date();
+
+    // Transaction with atomic stock deduction and strict validation
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Update prescription status
-      const updated = await tx.prescription.update({
-        where: { id },
-        data: { status: "DISPENSED" },
-      });
-
-      // 2. Decrement medicine stock and log if low
       const stockAlerts: string[] = [];
       const billingItems: { description: string; cost: number }[] = [];
       let totalCost = 0;
 
       for (const item of medicinesList) {
-        // Find medicine by name or ID
-        const med = await tx.medicine.findFirst({
+        // Concurrency-safe row-level lock on each medicine
+        const medCandidates = await tx.medicine.findMany({
           where: {
-            OR: [
-              { id: item.medicineId || "" },
-              { name: item.medicineName }
-            ]
-          }
+            OR: [{ id: item.medicineId || "" }, { name: item.medicineName }],
+          },
         });
 
-        if (med) {
-          const qty = item.quantity || 10;
-          const newStock = Math.max(0, med.stock - qty);
-          
-          await tx.medicine.update({
-            where: { id: med.id },
-            data: { stock: newStock },
-          });
+        if (medCandidates.length === 0) {
+          throw new Error(`Medicine '${item.medicineName}' not found in pharmacy inventory`);
+        }
 
-          const itemCost = med.price * qty;
-          billingItems.push({
-            description: `Medicine: ${med.name} x ${qty}`,
-            cost: itemCost
-          });
-          totalCost += itemCost;
+        const med = medCandidates[0];
 
-          if (newStock <= med.minStockLimit) {
-            stockAlerts.push(med.name);
-          }
+        // Row lock
+        await tx.$executeRaw`SELECT id FROM "Medicine" WHERE id = ${med.id} FOR UPDATE`;
+
+        // Refetch latest locked row
+        const lockedMed = await tx.medicine.findUnique({ where: { id: med.id } });
+        if (!lockedMed) {
+          throw new Error(`Medicine '${item.medicineName}' not found in pharmacy inventory`);
+        }
+
+        const qty = item.quantity || 10;
+
+        // 1. Expiry Validation
+        if (lockedMed.expiryDate && new Date(lockedMed.expiryDate) < now) {
+          const expStr = new Date(lockedMed.expiryDate).toISOString().split("T")[0];
+          throw new Error(
+            `Cannot dispense: Medicine '${lockedMed.name}' (Batch: ${lockedMed.batchNumber || "N/A"}) has EXPIRED on ${expStr}`
+          );
+        }
+
+        // 2. Insufficient Stock Validation
+        if (lockedMed.stock < qty) {
+          throw new Error(
+            `Cannot dispense: Insufficient stock for '${lockedMed.name}'. Requested: ${qty}, Available: ${lockedMed.stock}`
+          );
+        }
+
+        // 3. Atomic Decrement
+        const newStock = lockedMed.stock - qty;
+        await tx.medicine.update({
+          where: { id: lockedMed.id },
+          data: { stock: newStock },
+        });
+
+        const itemCost = lockedMed.price * qty;
+        billingItems.push({
+          description: `Medicine: ${lockedMed.name} x ${qty}`,
+          cost: itemCost,
+        });
+        totalCost += itemCost;
+
+        if (newStock <= lockedMed.minStockLimit) {
+          stockAlerts.push(`${lockedMed.name} (remaining: ${newStock} ${lockedMed.unit})`);
         }
       }
 
-      // 3. Create or update bill if appointment exists
+      // 4. Update prescription status
+      const updatedPrescription = await tx.prescription.update({
+        where: { id },
+        data: { status: "DISPENSED" },
+      });
+
+      // 5. Update or add bill items
       if (prescription.appointmentId && billingItems.length > 0) {
         const existingBill = await tx.bill.findUnique({
-          where: { appointmentId: prescription.appointmentId }
+          where: { appointmentId: prescription.appointmentId },
         });
 
         if (existingBill) {
-          const prevItems = typeof existingBill.items === "string" ? JSON.parse(existingBill.items) : existingBill.items;
+          const prevItems =
+            typeof existingBill.items === "string"
+              ? JSON.parse(existingBill.items)
+              : existingBill.items;
           const updatedItems = [...prevItems, ...billingItems];
           const updatedAmount = existingBill.amount + totalCost;
           await tx.bill.update({
@@ -191,40 +278,83 @@ router.put("/prescriptions/:id/dispense", authenticateToken as any, requireRoles
             data: {
               items: JSON.stringify(updatedItems),
               amount: updatedAmount,
-            }
+            },
           });
         }
       }
 
-      // 4. Create Audit Log
+      // 6. Audit Log
       await tx.auditLog.create({
         data: {
           userId: req.user?.id,
           action: "DISPENSE_PRESCRIPTION",
-          details: `Dispensed prescription ${id} for patient ${prescription.patient.name}. Medicines cost: $${totalCost.toFixed(2)}.`,
-        }
+          details: `Dispensed prescription ${id} for patient ${prescription.patient.name}. Medicines total: $${totalCost.toFixed(2)}.`,
+        },
       });
 
-      return { updated, stockAlerts };
+      return { updated: updatedPrescription, stockAlerts, totalCost };
     });
 
     res.json({
       message: "Prescription dispensed and stock updated successfully",
       prescription: result.updated,
-      alerts: result.stockAlerts.length > 0 ? `Low stock alert for: ${result.stockAlerts.join(", ")}` : null,
+      totalCost: result.totalCost,
+      alerts:
+        result.stockAlerts.length > 0
+          ? `Low stock alert for: ${result.stockAlerts.join(", ")}`
+          : null,
     });
   } catch (error: any) {
-    res.status(500).json({ error: "Failed to dispense prescription", details: error.message });
+    res.status(400).json({ error: error.message || "Failed to dispense prescription" });
   }
 });
 
-// GET Medicine Inventory (Pharmacist, Doctor, Admin)
+// GET Medicine Inventory Summary Stats (Pharmacist, Doctor, Admin)
+router.get("/inventory/summary", authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const medicines = await prisma.medicine.findMany();
+    const enriched = medicines.map(enrichMedicine);
+
+    const totalMedicines = enriched.length;
+    const lowStockCount = enriched.filter((m) => m.isLowStock && !m.isExpired).length;
+    const nearExpiryCount = enriched.filter((m) => m.isNearExpiry && !m.isExpired).length;
+    const expiredCount = enriched.filter((m) => m.isExpired).length;
+    const inStockCount = enriched.filter((m) => !m.isLowStock && !m.isExpired).length;
+
+    res.json({
+      totalMedicines,
+      lowStockCount,
+      nearExpiryCount,
+      expiredCount,
+      inStockCount,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET Medicine Inventory with Filtering (Pharmacist, Doctor, Admin)
 router.get("/inventory", authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const filter = req.query.filter as string | undefined;
+
     const medicines = await prisma.medicine.findMany({
-      orderBy: { name: "asc" }
+      orderBy: { name: "asc" },
     });
-    res.json(medicines);
+
+    let enriched = medicines.map(enrichMedicine);
+
+    if (filter === "LOW_STOCK") {
+      enriched = enriched.filter((m) => m.isLowStock);
+    } else if (filter === "NEAR_EXPIRY") {
+      enriched = enriched.filter((m) => m.isNearExpiry);
+    } else if (filter === "EXPIRED") {
+      enriched = enriched.filter((m) => m.isExpired);
+    } else if (filter === "IN_STOCK") {
+      enriched = enriched.filter((m) => !m.isLowStock && !m.isExpired);
+    }
+
+    res.json(enriched);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -236,52 +366,91 @@ router.post("/inventory", authenticateToken as any, requireRoles(["PHARMACIST", 
     const validated = AddMedicineSchema.parse(req.body);
 
     const existing = await prisma.medicine.findUnique({
-      where: { name: validated.name }
+      where: { name: validated.name },
     });
     if (existing) {
-      return res.status(400).json({ error: "Medicine with this name already exists" });
+      return res.status(400).json({ error: "Medicine with this name already exists in inventory" });
     }
 
+    const expiryDate = validated.expiryDate ? new Date(validated.expiryDate) : null;
+
     const medicine = await prisma.medicine.create({
-      data: validated
+      data: {
+        name: validated.name,
+        genericName: validated.genericName || null,
+        category: validated.category,
+        manufacturer: validated.manufacturer || null,
+        batchNumber: validated.batchNumber || null,
+        expiryDate,
+        stock: validated.stock,
+        unit: validated.unit,
+        minStockLimit: validated.minStockLimit,
+        price: validated.price,
+      },
     });
 
-    res.status(201).json(medicine);
+    res.status(201).json(enrichMedicine(medicine));
   } catch (error: any) {
     if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
     res.status(500).json({ error: error.message });
   }
 });
 
-// PUT Update Stock (Pharmacist, Admin Only)
+// PUT Edit Full Medicine Details (Pharmacist, Admin Only)
 router.put("/inventory/:id", authenticateToken as any, requireRoles(["PHARMACIST", "ADMIN"]), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const validated = UpdateMedicineSchema.parse(req.body);
+
+    const existing = await prisma.medicine.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: "Medicine not found" });
+    }
+
+    const dataToUpdate: any = { ...validated };
+    if (validated.expiryDate !== undefined) {
+      dataToUpdate.expiryDate = validated.expiryDate ? new Date(validated.expiryDate) : null;
+    }
+
+    const updated = await prisma.medicine.update({
+      where: { id },
+      data: dataToUpdate,
+    });
+
+    res.json(enrichMedicine(updated));
+  } catch (error: any) {
+    if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT Update Stock Only (Pharmacist, Admin Only)
+router.put("/inventory/:id/stock", authenticateToken as any, requireRoles(["PHARMACIST", "ADMIN"]), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { stock } = UpdateStockSchema.parse(req.body);
 
     const updated = await prisma.medicine.update({
       where: { id },
-      data: { stock }
+      data: { stock },
     });
 
-    res.json(updated);
+    res.json(enrichMedicine(updated));
   } catch (error: any) {
     if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
     res.status(500).json({ error: error.message });
   }
 });
 
-// GET Low Stock Alerts (Pharmacist, Admin Only)
+// GET Low Stock & Expiry Alerts (Pharmacist, Admin Only)
 router.get("/inventory/alerts", authenticateToken as any, requireRoles(["PHARMACIST", "ADMIN"]), async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const lowStock = await prisma.medicine.findMany({
-      where: {
-        stock: {
-          lte: prisma.medicine.fields.minStockLimit
-        }
-      }
-    });
-    res.json(lowStock);
+    const medicines = await prisma.medicine.findMany();
+    const enriched = medicines.map(enrichMedicine);
+
+    const alerts = enriched.filter((m) => m.isLowStock || m.isNearExpiry || m.isExpired);
+
+    res.json(alerts);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

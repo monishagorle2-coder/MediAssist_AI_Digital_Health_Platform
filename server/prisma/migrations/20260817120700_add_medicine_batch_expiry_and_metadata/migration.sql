@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE "Medicine" ADD COLUMN IF NOT EXISTS "genericName" TEXT,
+ADD COLUMN IF NOT EXISTS "manufacturer" TEXT,
+ADD COLUMN IF NOT EXISTS "batchNumber" TEXT,
+ADD COLUMN IF NOT EXISTS "expiryDate" TIMESTAMP(3);

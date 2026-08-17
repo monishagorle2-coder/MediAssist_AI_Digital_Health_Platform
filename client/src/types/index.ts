@@ -23,6 +23,29 @@ export interface Patient {
   gender: string;
   bloodGroup: string;
   address: string;
+  allergies?: string;
+  chronicConditions?: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  insuranceProvider?: string;
+  insuranceNumber?: string;
+  vitals?: Vitals[];
+}
+
+export interface Vitals {
+  id: string;
+  patientId: string;
+  appointmentId?: string;
+  bloodPressure?: string;
+  pulse?: number;
+  temperature?: number;
+  spo2?: number;
+  weight?: number;
+  height?: number;
+  bmi?: number;
+  recordedBy?: string;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 export interface Doctor {
@@ -42,12 +65,20 @@ export interface Department {
   description: string;
 }
 
+export type QueueStatus = 'WAITING' | 'CHECKED_IN' | 'IN_CONSULTATION' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW';
+
 export interface Appointment {
   id: string;
   patientId: string;
   doctorId: string;
   slotDateTime: string;
   status: AppointmentStatus;
+  queueStatus?: QueueStatus;
+  tokenNumber?: number;
+  checkedInAt?: string;
+  consultationStartedAt?: string;
+  consultationCompletedAt?: string;
+  waitingMinutes?: number;
   reason: string;
   notes?: string;
   patient?: Patient;
@@ -55,6 +86,7 @@ export interface Appointment {
   diagnosisRecord?: DiagnosisRecord;
   prescription?: Prescription;
   bill?: Bill;
+  vitals?: Vitals[];
 }
 
 export interface DifferentialDiagnosisItem {
@@ -111,11 +143,21 @@ export interface Prescription {
 export interface Medicine {
   id: string;
   name: string;
+  genericName?: string;
   category: string;
+  manufacturer?: string;
+  batchNumber?: string;
+  expiryDate?: string;
   stock: number;
   unit: string;
   minStockLimit: number;
   price: number;
+  createdAt?: string;
+  updatedAt?: string;
+  isExpired?: boolean;
+  isNearExpiry?: boolean;
+  isLowStock?: boolean;
+  daysUntilExpiry?: number;
 }
 
 export interface BillItem {

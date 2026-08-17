@@ -36,6 +36,13 @@ model Patient {
   diagnosisRecords DiagnosisRecord[]
   prescriptions    Prescription[]
   bills            Bill[]
+  allergies        String?
+  chronicConditions String?
+  emergencyContactName String?
+  emergencyContactPhone String?
+  insuranceProvider String?
+  insuranceNumber  String?
+  vitals           Vitals[]
 }
 
 model Doctor {
@@ -54,6 +61,7 @@ model Doctor {
   appointments     Appointment[]
   diagnosisRecords DiagnosisRecord[]
   prescriptions    Prescription[]
+  doctorSchedules  DoctorSchedule[]
 }
 
 model Department {
@@ -66,20 +74,26 @@ model Department {
 }
 
 model Appointment {
-  id               String           @id @default(uuid())
-  patientId        String
-  patient          Patient          @relation(fields: [patientId], references: [id])
-  doctorId         String
-  doctor           Doctor           @relation(fields: [doctorId], references: [id])
-  slotDateTime     DateTime
-  status           String           @default("PENDING") // "PENDING" | "CONFIRMED" | "CANCELLED"
-  reason           String
-  notes            String?
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  diagnosisRecord  DiagnosisRecord?
-  prescription     Prescription?
-  bill             Bill?
+  id                      String           @id @default(uuid())
+  patientId               String
+  patient                 Patient          @relation(fields: [patientId], references: [id])
+  doctorId                String
+  doctor                  Doctor           @relation(fields: [doctorId], references: [id])
+  slotDateTime            DateTime
+  status                  String           @default("PENDING") // "PENDING" | "CONFIRMED" | "CANCELLED"
+  queueStatus             String           @default("WAITING") // "WAITING" | "CHECKED_IN" | "IN_CONSULTATION" | "COMPLETED" | "CANCELLED" | "NO_SHOW"
+  tokenNumber             Int?
+  checkedInAt             DateTime?
+  consultationStartedAt   DateTime?
+  consultationCompletedAt DateTime?
+  reason                  String
+  notes                   String?
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
+  diagnosisRecord         DiagnosisRecord?
+  prescription            Prescription?
+  bill                    Bill?
+  vitals                  Vitals[]
 }
 
 model DiagnosisRecord {
@@ -99,18 +113,23 @@ model DiagnosisRecord {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   prescriptions  Prescription[]
+  aiSuggestions String? // JSON payload from AI suggestions
 }
 
 model Medicine {
-  id            String   @id @default(uuid())
-  name          String   @unique
+  id            String    @id @default(uuid())
+  name          String    @unique
+  genericName   String?
   category      String
+  manufacturer  String?
+  batchNumber   String?
+  expiryDate    DateTime?
   stock         Int
   unit          String   // e.g. "tablets", "bottles"
   minStockLimit Int      @default(10)
   price         Float
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 }
 
 model Prescription {
@@ -163,3 +182,37 @@ model Notification {
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
 }
+
+model Vitals {
+  id            String       @id @default(uuid())
+  patientId     String
+  patient       Patient      @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  appointmentId String?
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  bloodPressure String?      // e.g. "120/80"
+  pulse         Int?         // bpm
+  temperature   Float?       // in Fahrenheit, e.g. 98.6
+  spo2          Int?         // % e.g. 98
+  weight        Float?       // in kg, e.g. 70.5
+  height        Float?       // in cm, e.g. 175.0
+  bmi           Float?       // calculated
+  recordedBy    String?      // Staff/Doctor user ID or name
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+}
+
+model DoctorSchedule {
+  id           String   @id @default(uuid())
+  doctorId     String
+  doctor       Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  dayOfWeek    Int      // 0 = Sunday, 1 = Monday, 2 = Tuesday, 3 = Wednesday, 4 = Thursday, 5 = Friday, 6 = Saturday
+  startTime    String   // e.g. "09:00"
+  endTime      String   // e.g. "17:00"
+  slotDuration Int      @default(15) // in minutes
+  isAvailable  Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([doctorId, dayOfWeek])
+}
+

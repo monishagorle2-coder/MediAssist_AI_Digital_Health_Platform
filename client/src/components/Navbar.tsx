@@ -17,7 +17,7 @@ export const Navbar: React.FC = () => {
 
   const fetchNotifications = async () => {
     try {
-      const response = await api.get("/hospital/notifications");
+      const response = await api.get("/notifications");
       setNotifications(response.data);
     } catch (err) {
       console.error("Failed to load notifications", err);
@@ -26,7 +26,7 @@ export const Navbar: React.FC = () => {
 
   const markAsRead = async (id: string) => {
     try {
-      await api.put(`/hospital/notifications/${id}/read`);
+      await api.put(`/notifications/${id}/read`);
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
     } catch (err) {
       console.error("Failed to mark notification read", err);

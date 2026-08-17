@@ -9,7 +9,7 @@ const CreateDiagnosisSchema = z.object({
   appointmentId: z.string().optional(),
   patientId: z.string(),
   symptoms: z.string().min(1),
-  aiSuggestions: z.any(), // JSON payload from AI Service
+  aiSuggestions: z.any().optional(), // JSON payload from AI Service
   finalDiagnosis: z.string().optional(),
 });
 
@@ -30,19 +30,21 @@ router.post("/", authenticateToken as any, async (req: AuthenticatedRequest, res
       return res.status(400).json({ error: "Doctor profile not found for this user" });
     }
 
-    const record = await prisma.diagnosisRecord.create({
-      data: {
-        appointmentId: validated.appointmentId || null,
-        patientId: validated.patientId,
-        doctorId,
-        symptoms: validated.symptoms,
-        aiSuggestions: typeof validated.aiSuggestions === "string" 
-          ? validated.aiSuggestions 
-          : JSON.stringify(validated.aiSuggestions),
-        finalDiagnosis: validated.finalDiagnosis || null,
-        status: "PENDING",
-      },
-    });
+   const record = await prisma.diagnosisRecord.create({
+  data: {
+    appointmentId: validated.appointmentId || null,
+    patientId: validated.patientId,
+    doctorId,
+    symptoms: validated.symptoms,
+    aiSuggestions: validated.aiSuggestions
+      ? typeof validated.aiSuggestions === "string"
+        ? validated.aiSuggestions
+        : JSON.stringify(validated.aiSuggestions)
+      : JSON.stringify({}),
+    finalDiagnosis: validated.finalDiagnosis || null,
+    status: "PENDING",
+  },
+});
 
     res.status(201).json(record);
   } catch (error: any) {

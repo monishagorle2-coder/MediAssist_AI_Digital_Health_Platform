@@ -117,6 +117,142 @@ router.post("/doctors", authenticateToken as any, requireRoles(["ADMIN"]), async
   }
 });
 
+const UpdatePatientProfileSchema = z.object({
+  name: z.string().min(1).optional(),
+  phone: z.string().min(10).optional(),
+  address: z.string().optional(),
+  bloodGroup: z.string().optional(),
+  allergies: z.string().nullable().optional(),
+  chronicConditions: z.string().nullable().optional(),
+  emergencyContactName: z.string().nullable().optional(),
+  emergencyContactPhone: z.string().nullable().optional(),
+  insuranceProvider: z.string().nullable().optional(),
+  insuranceNumber: z.string().nullable().optional(),
+});
+
+const RecordVitalsSchema = z.object({
+  appointmentId: z.string().optional().nullable(),
+  bloodPressure: z.string().optional().nullable(),
+  pulse: z.number().int().positive().optional().nullable(),
+  temperature: z.number().positive().optional().nullable(),
+  spo2: z.number().int().min(50).max(100).optional().nullable(),
+  weight: z.number().positive().optional().nullable(),
+  height: z.number().positive().optional().nullable(),
+});
+
+// GET Patient Profile (Patient Only)
+router.get("/patients/me", authenticateToken as any, requireRoles(["PATIENT"]), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const patientId = req.user?.patientId;
+    if (!patientId) {
+      return res.status(400).json({ error: "Patient record not found for this user" });
+    }
+
+    const patient = await prisma.patient.findUnique({
+      where: { id: patientId },
+      include: {
+        user: { select: { email: true, role: true, createdAt: true } },
+        vitals: { orderBy: { createdAt: "desc" }, take: 10 }
+      }
+    });
+
+    if (!patient) {
+      return res.status(404).json({ error: "Patient profile not found" });
+    }
+
+    res.json(patient);
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch patient profile", details: error.message });
+  }
+});
+
+// PUT Update Patient Profile (Patient Only)
+router.put("/patients/me", authenticateToken as any, requireRoles(["PATIENT"]), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const patientId = req.user?.patientId;
+    if (!patientId) {
+      return res.status(400).json({ error: "Patient record not found for this user" });
+    }
+
+    const validated = UpdatePatientProfileSchema.parse(req.body);
+
+    const updated = await prisma.patient.update({
+      where: { id: patientId },
+      data: validated
+    });
+
+    res.json(updated);
+  } catch (error: any) {
+    if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+    res.status(500).json({ error: "Failed to update profile", details: error.message });
+  }
+});
+
+// POST Record Clinical Vitals (Doctor, Receptionist, Admin Only)
+router.post("/patients/:id/vitals", authenticateToken as any, requireRoles(["DOCTOR", "RECEPTIONIST", "ADMIN"]), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const validated = RecordVitalsSchema.parse(req.body);
+
+    const patient = await prisma.patient.findUnique({ where: { id } });
+    if (!patient) {
+      return res.status(404).json({ error: "Patient not found" });
+    }
+
+    // Auto-calculate BMI if both height and weight are provided
+    let calculatedBmi: number | null = null;
+    if (validated.weight && validated.height) {
+      const heightInMeters = validated.height > 3.0 ? validated.height / 100 : validated.height;
+      if (heightInMeters > 0) {
+        calculatedBmi = Math.round((validated.weight / (heightInMeters * heightInMeters)) * 10) / 10;
+      }
+    }
+
+    const vitals = await prisma.vitals.create({
+      data: {
+        patientId: id,
+        appointmentId: validated.appointmentId || null,
+        bloodPressure: validated.bloodPressure || null,
+        pulse: validated.pulse || null,
+        temperature: validated.temperature || null,
+        spo2: validated.spo2 || null,
+        weight: validated.weight || null,
+        height: validated.height || null,
+        bmi: calculatedBmi,
+        recordedBy: req.user?.id || "Clinical Staff",
+      }
+    });
+
+    res.status(201).json(vitals);
+  } catch (error: any) {
+    if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+    res.status(500).json({ error: "Failed to record vitals", details: error.message });
+  }
+});
+
+// GET Patient Vitals History (Role Filtered & Ownership Enforced)
+router.get("/patients/:id/vitals", authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const role = req.user?.role;
+    const patientId = req.user?.patientId;
+
+    // Authorization: Patients can only view their own vitals
+    if (role === "PATIENT" && patientId !== id) {
+      return res.status(403).json({ error: "Forbidden: You cannot access other patients' vitals" });
+    }
+
+    const vitals = await prisma.vitals.findMany({
+      where: { patientId: id },
+      orderBy: { createdAt: "desc" }
+    });
+
+    res.json(vitals);
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch vitals", details: error.message });
+  }
+});
+
 // GET Patients (Receptionist, Admin, Doctor)
 router.get("/patients", authenticateToken as any, requireRoles(["RECEPTIONIST", "ADMIN", "DOCTOR"]), async (req: AuthenticatedRequest, res: Response) => {
   try {

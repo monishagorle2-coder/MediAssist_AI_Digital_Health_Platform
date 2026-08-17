@@ -12,7 +12,8 @@ import {
   ShieldAlert, 
   CreditCard,
   Building2,
-  Activity
+  Activity,
+  User
 } from "lucide-react";
 
 interface SidebarProps {
@@ -51,7 +52,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
               }`}
             >
               <FileText className="h-4 w-4" />
-              <span>Confirmed Medical Reports</span>
+              <span>Medical Records</span>
+            </button>
+            <button
+              onClick={() => setActiveTab("vitals")}
+              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                activeTab === "vitals"
+                  ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/30"
+                  : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+              }`}
+            >
+              <Activity className="h-4 w-4" />
+              <span>Vitals History</span>
             </button>
             <button
               onClick={() => setActiveTab("prescriptions")}
@@ -65,6 +77,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
               <span>My Prescriptions</span>
             </button>
             <button
+              onClick={() => setActiveTab("profile")}
+              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                activeTab === "profile"
+                  ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/30"
+                  : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+              }`}
+            >
+              <User className="h-4 w-4" />
+              <span>My Medical Profile</span>
+            </button>
+            <button
               onClick={() => setActiveTab("ai-assistant")}
               className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
                 activeTab === "ai-assistant"
@@ -73,7 +96,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
               }`}
             >
               <Bot className="h-4 w-4 text-emerald-400" />
-              <span>AI Symptom Navigator</span>
+              <span>AI Health Assistant</span>
             </button>
           </>
         );

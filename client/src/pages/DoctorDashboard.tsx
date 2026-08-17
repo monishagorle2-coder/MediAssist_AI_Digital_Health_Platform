@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import api from "../services/api";
-import type { Appointment, Medicine } from "../types";
-import { Stethoscope, Activity, Pill, CheckCircle2, Sparkles, ChevronRight } from "lucide-react";
+import type { Appointment, Medicine, Vitals } from "../types";
+import { Stethoscope, Activity, Pill, CheckCircle2, Sparkles, ChevronRight, HeartPulse, X, AlertTriangle } from "lucide-react";
 
 interface DoctorDashboardProps {
   activeTab: string;
@@ -11,6 +11,20 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [selectedApp, setSelectedApp] = useState<Appointment | null>(null);
   const [medicinesInventory, setMedicinesInventory] = useState<Medicine[]>([]);
+
+  // Patient Clinical Vitals State
+  const [patientVitals, setPatientVitals] = useState<Vitals[]>([]);
+  const [showVitalsModal, setShowVitalsModal] = useState(false);
+  const [vitalsForm, setVitalsForm] = useState({
+    bloodPressure: "120/80",
+    pulse: "72",
+    temperature: "98.6",
+    spo2: "98",
+    weight: "70",
+    height: "175",
+  });
+  const [saveVitalsLoading, setSaveVitalsLoading] = useState(false);
+  const [vitalsError, setVitalsError] = useState("");
 
   // AI Decision Support State
   const [aiSuggestions, setAiSuggestions] = useState<any>(null);
@@ -57,10 +71,48 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
     }
   };
 
+  const fetchPatientVitals = async (patientId: string) => {
+    try {
+      const res = await api.get(`/patients/${patientId}/vitals`);
+      setPatientVitals(res.data);
+    } catch (err) {
+      console.error("Failed to fetch patient vitals", err);
+    }
+  };
+
   const selectAppointment = (app: Appointment) => {
     setSelectedApp(app);
     setSymptomsInput(app.reason);
     setAiSuggestions(null);
+    if (app.patientId) {
+      fetchPatientVitals(app.patientId);
+    }
+  };
+
+  const handleRecordVitals = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedApp) return;
+    setSaveVitalsLoading(true);
+    setVitalsError("");
+
+    try {
+      await api.post(`/patients/${selectedApp.patientId}/vitals`, {
+        appointmentId: selectedApp.id,
+        bloodPressure: vitalsForm.bloodPressure || null,
+        pulse: vitalsForm.pulse ? parseInt(vitalsForm.pulse) : null,
+        temperature: vitalsForm.temperature ? parseFloat(vitalsForm.temperature) : null,
+        spo2: vitalsForm.spo2 ? parseInt(vitalsForm.spo2) : null,
+        weight: vitalsForm.weight ? parseFloat(vitalsForm.weight) : null,
+        height: vitalsForm.height ? parseFloat(vitalsForm.height) : null,
+      });
+
+      setShowVitalsModal(false);
+      fetchPatientVitals(selectedApp.patientId);
+    } catch (err: any) {
+      setVitalsError(err.response?.data?.error || "Failed to record vitals");
+    } finally {
+      setSaveVitalsLoading(false);
+    }
   };
 
   const runAiDecisionSupport = async () => {
@@ -68,7 +120,10 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
     setAiLoading(true);
     try {
       // 1. Call AI proxy service to get differential diagnosis & recommendations
-      const aiRes = await api.post("/ai/clinical-support", { symptoms: symptomsInput });
+      const aiRes = await api.post("/ai/suggestions", {
+        symptoms: symptomsInput,
+        history: selectedApp.notes || "None"
+      });
       setAiSuggestions(aiRes.data);
 
       // 2. Automatically record pending diagnosis entry for this appointment
@@ -87,6 +142,32 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
       console.error("Failed to run AI support", err);
     } finally {
       setAiLoading(false);
+    }
+  };
+
+  const handleStartConsultation = async () => {
+    if (!selectedApp) return;
+    try {
+      const res = await api.put(`/appointments/${selectedApp.id}/start-consultation`);
+      const updated = res.data.appointment;
+      setSelectedApp((prev) => prev ? { ...prev, ...updated } : updated);
+      fetchAppointments();
+      alert("Consultation started with patient!");
+    } catch (err: any) {
+      alert(err.response?.data?.error || "Failed to start consultation.");
+    }
+  };
+
+  const handleCompleteConsultation = async () => {
+    if (!selectedApp) return;
+    try {
+      const res = await api.put(`/appointments/${selectedApp.id}/complete-consultation`);
+      const updated = res.data.appointment;
+      setSelectedApp((prev) => prev ? { ...prev, ...updated } : updated);
+      fetchAppointments();
+      alert("Consultation completed successfully! Patient report & prescriptions finalized.");
+    } catch (err: any) {
+      alert(err.response?.data?.error || "Failed to complete consultation.");
     }
   };
 
@@ -162,16 +243,29 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
       {/* Main Grid: Queue on Left, Decision Support on Right */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* Left Side: Patient Queue (4 cols) */}
+        {/* Left Side: Consultation Queue (4 cols) */}
         <div className="lg:col-span-4 space-y-4">
-          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
-              Today's Consultations ({appointments.length})
-            </h3>
-            
-            <div className="space-y-2.5">
+          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-100 flex items-center space-x-2">
+                  <Stethoscope className="h-4 w-4 text-cyan-400" />
+                  <span>Today's Consultation Queue</span>
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Ordered by live check-in token & arrival
+                </p>
+              </div>
+              <span className="px-2.5 py-1 rounded-full bg-cyan-500/20 text-cyan-400 text-xs font-bold border border-cyan-500/30">
+                {appointments.length} Total
+              </span>
+            </div>
+
+            <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1">
               {appointments.length === 0 ? (
-                <div className="p-4 text-center text-xs text-slate-500">No consultations in queue</div>
+                <div className="p-8 text-center text-xs text-slate-500">
+                  No appointments scheduled for today.
+                </div>
               ) : (
                 appointments.map((app) => (
                   <button
@@ -179,16 +273,44 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
                     onClick={() => selectAppointment(app)}
                     className={`w-full text-left p-3.5 rounded-xl border transition-all flex items-center justify-between ${
                       selectedApp?.id === app.id
-                        ? "bg-cyan-950/70 border-cyan-500/50 shadow-md shadow-cyan-900/20"
-                        : "bg-slate-950/60 border-slate-850 hover:bg-slate-850"
+                        ? "bg-slate-850 border-cyan-500 shadow-md ring-1 ring-cyan-500/50"
+                        : "bg-slate-950/80 border-slate-800 hover:border-slate-700"
                     }`}
                   >
-                    <div>
-                      <div className="text-xs font-bold text-slate-200">{app.patient?.name || "Patient"}</div>
-                      <div className="text-[11px] text-slate-400 mt-0.5">{app.reason}</div>
-                      <div className="text-[10px] text-cyan-400 mt-1">{new Date(app.slotDateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-2">
+                        {app.tokenNumber ? (
+                          <span className="px-2 py-0.5 bg-cyan-500/20 text-cyan-300 font-extrabold text-[11px] rounded-lg border border-cyan-500/30">
+                            Token #{app.tokenNumber}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 bg-slate-900 text-slate-500 text-[10px] rounded border border-slate-800">
+                            Not Checked In
+                          </span>
+                        )}
+                        <span className="text-xs font-bold text-slate-200">{app.patient?.name || "Patient"}</span>
+                      </div>
+
+                      <div className="text-[11px] text-slate-400">{app.reason}</div>
+
+                      <div className="flex items-center space-x-2 text-[10px]">
+                        <span className="text-slate-400">
+                          {new Date(app.slotDateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        <span className={`px-2 py-0.2 rounded-full font-bold text-[9px] border ${
+                          app.queueStatus === "IN_CONSULTATION"
+                            ? "bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse"
+                            : app.queueStatus === "CHECKED_IN"
+                            ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40"
+                            : app.queueStatus === "COMPLETED"
+                            ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                            : "bg-slate-900 text-slate-400 border-slate-800"
+                        }`}>
+                          {app.queueStatus || "WAITING"}
+                        </span>
+                      </div>
                     </div>
-                    <ChevronRight className="h-4 w-4 text-slate-600" />
+                    <ChevronRight className="h-4 w-4 text-slate-600 shrink-0" />
                   </button>
                 ))
               )}
@@ -209,9 +331,53 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
                   <div className="text-xs text-slate-400 mt-1">
                     DOB: {selectedApp.patient?.dob ? new Date(selectedApp.patient.dob).toLocaleDateString() : "N/A"} • Gender: {selectedApp.patient?.gender} • Blood Group: <span className="text-rose-400 font-bold">{selectedApp.patient?.bloodGroup}</span>
                   </div>
+                  {(selectedApp.patient?.allergies || selectedApp.patient?.chronicConditions) && (
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                      {selectedApp.patient.allergies && (
+                        <span className="px-2 py-0.5 rounded bg-rose-950/80 border border-rose-800/80 text-rose-300 text-[10px] font-semibold flex items-center space-x-1">
+                          <AlertTriangle className="h-3 w-3" />
+                          <span>Allergies: {selectedApp.patient.allergies}</span>
+                        </span>
+                      )}
+                      {selectedApp.patient.chronicConditions && (
+                        <span className="px-2 py-0.5 rounded bg-amber-950/80 border border-amber-800/80 text-amber-300 text-[10px] font-semibold">
+                          Chronic: {selectedApp.patient.chronicConditions}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                <div className="flex items-center space-x-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Start / Complete Consultation Lifecycle Controls */}
+                  {selectedApp.queueStatus === "CHECKED_IN" && (
+                    <button
+                      onClick={handleStartConsultation}
+                      className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white text-xs font-bold shadow-lg flex items-center space-x-1.5 transition-all"
+                    >
+                      <Stethoscope className="h-4 w-4" />
+                      <span>Start Consultation</span>
+                    </button>
+                  )}
+
+                  {selectedApp.queueStatus === "IN_CONSULTATION" && (
+                    <button
+                      onClick={handleCompleteConsultation}
+                      className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-orange-500 hover:from-amber-500 hover:to-orange-400 text-white text-xs font-bold shadow-lg flex items-center space-x-1.5 transition-all animate-pulse"
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      <span>Complete Consultation</span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => setShowVitalsModal(true)}
+                    className="px-3 py-2 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-semibold flex items-center space-x-1.5 transition-all"
+                  >
+                    <Activity className="h-4 w-4" />
+                    <span>Record Vitals</span>
+                  </button>
+
                   <button
                     onClick={() => setShowPrescriptionModal(true)}
                     className="px-3 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center space-x-1.5 transition-all"
@@ -229,6 +395,64 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
                     <span>Confirm Diagnosis</span>
                   </button>
                 </div>
+              </div>
+
+              {/* Patient Vitals Summary Card */}
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2 text-xs font-bold text-slate-300 uppercase tracking-wider">
+                    <HeartPulse className="h-4 w-4 text-rose-400" />
+                    <span>Clinical Vitals & Biometrics</span>
+                  </div>
+                  {patientVitals.length > 0 && (
+                    <span className="text-[10px] text-slate-500">
+                      Recorded: {new Date(patientVitals[0].createdAt).toLocaleDateString()} {new Date(patientVitals[0].createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  )}
+                </div>
+
+                {patientVitals.length > 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 text-xs">
+                    <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800">
+                      <span className="text-[10px] text-slate-500 uppercase block font-bold">BP</span>
+                      <span className="font-mono font-bold text-slate-100 text-sm">{patientVitals[0].bloodPressure || "--"}</span>
+                    </div>
+                    <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800">
+                      <span className="text-[10px] text-slate-500 uppercase block font-bold">Pulse</span>
+                      <span className="font-bold text-emerald-400 text-sm">{patientVitals[0].pulse ? `${patientVitals[0].pulse} bpm` : "--"}</span>
+                    </div>
+                    <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800">
+                      <span className="text-[10px] text-slate-500 uppercase block font-bold">Temp</span>
+                      <span className="font-bold text-amber-400 text-sm">{patientVitals[0].temperature ? `${patientVitals[0].temperature}°F` : "--"}</span>
+                    </div>
+                    <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800">
+                      <span className="text-[10px] text-slate-500 uppercase block font-bold">SpO2</span>
+                      <span className="font-bold text-cyan-400 text-sm">{patientVitals[0].spo2 ? `${patientVitals[0].spo2}%` : "--"}</span>
+                    </div>
+                    <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800">
+                      <span className="text-[10px] text-slate-500 uppercase block font-bold">Weight</span>
+                      <span className="font-bold text-slate-200 text-sm">{patientVitals[0].weight ? `${patientVitals[0].weight} kg` : "--"}</span>
+                    </div>
+                    <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800">
+                      <span className="text-[10px] text-slate-500 uppercase block font-bold">Height</span>
+                      <span className="font-bold text-slate-200 text-sm">{patientVitals[0].height ? `${patientVitals[0].height} cm` : "--"}</span>
+                    </div>
+                    <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800">
+                      <span className="text-[10px] text-slate-500 uppercase block font-bold">BMI</span>
+                      <span className="font-bold text-purple-400 text-sm">{patientVitals[0].bmi ? patientVitals[0].bmi.toFixed(1) : "--"}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between text-xs text-slate-500 py-1">
+                    <span>No vitals recorded for this patient yet.</span>
+                    <button
+                      onClick={() => setShowVitalsModal(true)}
+                      className="text-cyan-400 hover:text-cyan-300 font-semibold underline text-xs"
+                    >
+                      + Record Check-in Vitals
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Symptoms Input and Run AI Button */}
@@ -483,6 +707,143 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
                   className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-semibold shadow-lg"
                 >
                   {prescLoading ? "Transmitting Rx..." : "Send to Pharmacy"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* RECORD CLINICAL VITALS MODAL */}
+      {showVitalsModal && selectedApp && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <h3 className="text-base font-bold text-slate-100 flex items-center space-x-2">
+                <HeartPulse className="h-5 w-5 text-rose-400" />
+                <span>Record Clinical Vitals</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowVitalsModal(false)}
+                className="text-slate-400 hover:text-slate-200"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400">
+              Record current biometrics for patient <strong className="text-slate-200">{selectedApp.patient?.name}</strong>.
+            </p>
+
+            {vitalsError && (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
+                {vitalsError}
+              </div>
+            )}
+
+            <form onSubmit={handleRecordVitals} className="space-y-4 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Blood Pressure (mmHg)</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. 120/80"
+                    value={vitalsForm.bloodPressure}
+                    onChange={(e) => setVitalsForm(prev => ({ ...prev, bloodPressure: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 font-mono font-bold focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Pulse (bpm)</label>
+                  <input
+                    type="number"
+                    required
+                    placeholder="e.g. 72"
+                    value={vitalsForm.pulse}
+                    onChange={(e) => setVitalsForm(prev => ({ ...prev, pulse: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Temperature (°F)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    required
+                    placeholder="e.g. 98.6"
+                    value={vitalsForm.temperature}
+                    onChange={(e) => setVitalsForm(prev => ({ ...prev, temperature: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">SpO2 Oxygen (%)</label>
+                  <input
+                    type="number"
+                    min="50"
+                    max="100"
+                    required
+                    placeholder="e.g. 98"
+                    value={vitalsForm.spo2}
+                    onChange={(e) => setVitalsForm(prev => ({ ...prev, spo2: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Weight (kg)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="e.g. 70.5"
+                    value={vitalsForm.weight}
+                    onChange={(e) => setVitalsForm(prev => ({ ...prev, weight: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Height (cm)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="e.g. 175"
+                    value={vitalsForm.height}
+                    onChange={(e) => setVitalsForm(prev => ({ ...prev, height: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+              </div>
+
+              {/* Real-time Calculated BMI Preview */}
+              {parseFloat(vitalsForm.weight) > 0 && parseFloat(vitalsForm.height) > 0 && (
+                <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between text-xs">
+                  <span className="text-slate-400 font-semibold">Calculated BMI</span>
+                  <span className="font-bold text-purple-400 text-sm">
+                    {(parseFloat(vitalsForm.weight) / Math.pow(parseFloat(vitalsForm.height) > 3 ? parseFloat(vitalsForm.height) / 100 : parseFloat(vitalsForm.height), 2)).toFixed(1)} kg/m²
+                  </span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end space-x-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowVitalsModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={saveVitalsLoading}
+                  className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-semibold shadow-lg"
+                >
+                  {saveVitalsLoading ? "Saving Vitals..." : "Save Vitals"}
                 </button>
               </div>
             </form>

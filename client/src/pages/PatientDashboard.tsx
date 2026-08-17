@@ -1,7 +1,25 @@
 import React, { useState, useEffect } from "react";
 import api from "../services/api";
-import type { Appointment, DiagnosisRecord, Prescription, Doctor } from "../types";
-import { Calendar, FileText, Pill, Bot, Plus, CheckCircle2, AlertCircle, Send, Stethoscope } from "lucide-react";
+import type { Appointment, DiagnosisRecord, Prescription, Doctor, Patient, Vitals } from "../types";
+import { 
+  Calendar, 
+  FileText, 
+  Pill, 
+  Bot, 
+  Plus, 
+  CheckCircle2, 
+  AlertCircle, 
+  Send, 
+  Stethoscope, 
+  User as UserIcon, 
+  Activity, 
+  Shield, 
+  Edit3, 
+  Save, 
+  X, 
+  Phone, 
+  AlertTriangle 
+} from "lucide-react";
 
 interface PatientDashboardProps {
   activeTab: string;
@@ -13,12 +31,36 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
 
+  // Medical Profile & Vitals State
+  const [profile, setProfile] = useState<Patient | null>(null);
+  const [vitalsList, setVitalsList] = useState<Vitals[]>([]);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [vitalsLoading, setVitalsLoading] = useState(false);
+  const [editProfileMode, setEditProfileMode] = useState(false);
+  const [profileFormData, setProfileFormData] = useState({
+    name: "",
+    phone: "",
+    address: "",
+    bloodGroup: "O+",
+    allergies: "",
+    chronicConditions: "",
+    emergencyContactName: "",
+    emergencyContactPhone: "",
+    insuranceProvider: "",
+    insuranceNumber: "",
+  });
+  const [saveProfileLoading, setSaveProfileLoading] = useState(false);
+  const [profileFeedback, setProfileFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
   // Booking Modal State
   const [showBookModal, setShowBookModal] = useState(false);
   const [selectedDoctorId, setSelectedDoctorId] = useState("");
   const [slotDate, setSlotDate] = useState("");
-  const [slotTime, setSlotTime] = useState("10:00");
   const [reason, setReason] = useState("");
+  const [availableSlots, setAvailableSlots] = useState<Array<{ time: string; slotDateTime: string; available: boolean; reason?: string }>>([]);
+  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slotsMessage, setSlotsMessage] = useState("");
+  const [selectedSlotDateTime, setSelectedSlotDateTime] = useState("");
   const [bookingLoading, setBookingLoading] = useState(false);
   const [bookingError, setBookingError] = useState("");
 
@@ -43,7 +85,7 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
         const appRes = await api.get("/appointments");
         setAppointments(appRes.data);
 
-        const docRes = await api.get("/hospital/doctors");
+        const docRes = await api.get("/doctors");
         setDoctors(docRes.data);
       } else if (activeTab === "reports") {
         const repRes = await api.get("/diagnosis");
@@ -51,31 +93,118 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
       } else if (activeTab === "prescriptions") {
         const presRes = await api.get("/pharmacy/prescriptions");
         setPrescriptions(presRes.data);
+      } else if (activeTab === "profile") {
+        setProfileLoading(true);
+        const profRes = await api.get("/patients/me");
+        setProfile(profRes.data);
+        setProfileFormData({
+          name: profRes.data.name || "",
+          phone: profRes.data.phone || "",
+          address: profRes.data.address || "",
+          bloodGroup: profRes.data.bloodGroup || "O+",
+          allergies: profRes.data.allergies || "",
+          chronicConditions: profRes.data.chronicConditions || "",
+          emergencyContactName: profRes.data.emergencyContactName || "",
+          emergencyContactPhone: profRes.data.emergencyContactPhone || "",
+          insuranceProvider: profRes.data.insuranceProvider || "",
+          insuranceNumber: profRes.data.insuranceNumber || "",
+        });
+        setProfileLoading(false);
+      } else if (activeTab === "vitals") {
+        setVitalsLoading(true);
+        const profRes = await api.get("/patients/me");
+        setProfile(profRes.data);
+        if (profRes.data?.id) {
+          const vitRes = await api.get(`/patients/${profRes.data.id}/vitals`);
+          setVitalsList(vitRes.data);
+        }
+        setVitalsLoading(false);
       }
     } catch (err) {
       console.error("Failed to load patient data", err);
+      setProfileLoading(false);
+      setVitalsLoading(false);
+    }
+  };
+
+  const handleUpdateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaveProfileLoading(true);
+    setProfileFeedback(null);
+    try {
+      const res = await api.put("/patients/me", profileFormData);
+      setProfile(res.data);
+      setEditProfileMode(false);
+      setProfileFeedback({ type: "success", message: "Medical profile updated successfully!" });
+    } catch (err: any) {
+      setProfileFeedback({
+        type: "error",
+        message: err.response?.data?.error || "Failed to update medical profile. Please check your inputs.",
+      });
+    } finally {
+      setSaveProfileLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedDoctorId && slotDate) {
+      fetchDoctorSlots(selectedDoctorId, slotDate);
+    } else {
+      setAvailableSlots([]);
+      setSelectedSlotDateTime("");
+      setSlotsMessage("");
+    }
+  }, [selectedDoctorId, slotDate]);
+
+  const fetchDoctorSlots = async (doctorId: string, date: string) => {
+    setSlotsLoading(true);
+    setSlotsMessage("");
+    setSelectedSlotDateTime("");
+    try {
+      const res = await api.get(`/appointments/doctors/${doctorId}/slots?date=${date}`);
+      if (!res.data.isWorkingDay) {
+        setSlotsMessage(res.data.message || "Doctor does not have consultation hours on this day.");
+        setAvailableSlots([]);
+      } else {
+        setAvailableSlots(res.data.slots || []);
+      }
+    } catch (err: any) {
+      setSlotsMessage(err.response?.data?.error || "Failed to load doctor consultation slots.");
+      setAvailableSlots([]);
+    } finally {
+      setSlotsLoading(false);
     }
   };
 
   const handleBookAppointment = async (e: React.FormEvent) => {
     e.preventDefault();
     setBookingError("");
+    if (!selectedSlotDateTime) {
+      setBookingError("Please select an available consultation time slot.");
+      return;
+    }
     setBookingLoading(true);
 
     try {
-      const slotDateTime = new Date(`${slotDate}T${slotTime}:00`).toISOString();
       await api.post("/appointments", {
         doctorId: selectedDoctorId,
-        slotDateTime,
+        slotDateTime: selectedSlotDateTime,
         reason,
       });
 
       setShowBookModal(false);
       setReason("");
+      setSelectedSlotDateTime("");
       setSelectedDoctorId("");
+      setSlotDate("");
       fetchData();
+      alert("Appointment confirmed! You can view it in your appointments list.");
     } catch (err: any) {
-      setBookingError(err.response?.data?.error || "Failed to book appointment.");
+      const errMsg = err.response?.data?.error || "Failed to book appointment.";
+      setBookingError(errMsg);
+      if (selectedDoctorId && slotDate) {
+        fetchDoctorSlots(selectedDoctorId, slotDate);
+      }
     } finally {
       setBookingLoading(false);
     }
@@ -91,12 +220,15 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
     setAiLoading(true);
 
     try {
-      const res = await api.post("/ai/symptom-navigator", { symptoms: userText });
+      const res = await api.post("/ai/patient-chat", {
+        message: userText,
+        history: []
+      });
       setChatMessages((prev) => [
         ...prev,
         {
           role: "ai",
-          content: res.data.patientGuidance || res.data.message || "Thank you for sharing. Please consult your physician for a medical evaluation.",
+          content: res.data.response || "Thank you for sharing. Please consult your physician for a medical evaluation.",
           disclaimer: true,
         },
       ]);
@@ -147,7 +279,7 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
               </div>
             ) : (
               appointments.map((app) => (
-                <div key={app.id} className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg relative overflow-hidden">
+                <div key={app.id} className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg relative overflow-hidden space-y-4">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center space-x-3">
                       <div className="h-10 w-10 rounded-xl bg-cyan-950 border border-cyan-800/50 flex items-center justify-center text-cyan-400">
@@ -158,14 +290,52 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
                         <span className="text-xs text-cyan-400 font-medium">{app.doctor?.specialization || "General Clinic"}</span>
                       </div>
                     </div>
-                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-semibold border ${
-                      app.status === "CONFIRMED" ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-amber-500/20 text-amber-400 border-amber-500/30"
-                    }`}>
-                      {app.status}
-                    </span>
+                    
+                    <div className="flex flex-col items-end space-y-1">
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-semibold border ${
+                        app.status === "CONFIRMED" ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-amber-500/20 text-amber-400 border-amber-500/30"
+                      }`}>
+                        {app.status}
+                      </span>
+                      {app.tokenNumber && (
+                        <span className="px-2.5 py-0.5 bg-cyan-500/20 text-cyan-300 font-extrabold text-[11px] rounded-lg border border-cyan-500/30">
+                          Token #{app.tokenNumber}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="mt-4 pt-3 border-t border-slate-800/60 grid grid-cols-2 gap-2 text-xs">
+                  {/* Live Queue Status Banner */}
+                  <div className="p-3 bg-slate-950 rounded-xl border border-slate-850 flex items-center justify-between text-xs">
+                    <div className="flex items-center space-x-2">
+                      <span className={`h-2 w-2 rounded-full ${
+                        app.queueStatus === "IN_CONSULTATION"
+                          ? "bg-amber-400 animate-ping"
+                          : app.queueStatus === "CHECKED_IN"
+                          ? "bg-cyan-400 animate-pulse"
+                          : app.queueStatus === "COMPLETED"
+                          ? "bg-emerald-400"
+                          : "bg-slate-500"
+                      }`} />
+                      <span className="text-slate-400 font-medium">
+                        {app.queueStatus === "IN_CONSULTATION"
+                          ? "With Doctor • Consultation in Progress"
+                          : app.queueStatus === "CHECKED_IN"
+                          ? "Checked In • Waiting in Clinic Lobby"
+                          : app.queueStatus === "COMPLETED"
+                          ? "Consultation Completed"
+                          : "Scheduled • Awaiting Check-In at Front Desk"}
+                      </span>
+                    </div>
+
+                    {app.checkedInAt && (
+                      <span className="text-[10px] text-slate-500 font-medium">
+                        Checked in: {new Date(app.checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="pt-1 grid grid-cols-2 gap-2 text-xs">
                     <div>
                       <span className="text-[10px] text-slate-500 uppercase tracking-wider block">Date & Time</span>
                       <span className="text-slate-300 font-medium">{new Date(app.slotDateTime).toLocaleString()}</span>
@@ -298,6 +468,442 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
         </div>
       )}
 
+      {/* MY MEDICAL PROFILE TAB */}
+      {activeTab === "profile" && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-bold text-slate-100 flex items-center space-x-2">
+                <UserIcon className="h-5 w-5 text-cyan-400" />
+                <span>My Medical Profile</span>
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">
+                Manage your personal demographics, clinical history, emergency contacts, and insurance coverage.
+              </p>
+            </div>
+
+            {!editProfileMode && (
+              <button
+                onClick={() => setEditProfileMode(true)}
+                className="flex items-center space-x-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-semibold shadow-lg transition-all"
+              >
+                <Edit3 className="h-4 w-4" />
+                <span>Edit Profile</span>
+              </button>
+            )}
+          </div>
+
+          {profileFeedback && (
+            <div className={`p-4 rounded-xl text-xs flex items-center space-x-2 ${
+              profileFeedback.type === "success" 
+                ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" 
+                : "bg-rose-500/10 border border-rose-500/20 text-rose-400"
+            }`}>
+              {profileFeedback.type === "success" ? (
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+              ) : (
+                <AlertCircle className="h-4 w-4 shrink-0" />
+              )}
+              <span>{profileFeedback.message}</span>
+            </div>
+          )}
+
+          {profileLoading ? (
+            <div className="p-12 text-center text-slate-500 text-xs">Loading medical profile...</div>
+          ) : editProfileMode ? (
+            /* EDIT PROFILE FORM */
+            <form onSubmit={handleUpdateProfile} className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+              <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+                <h3 className="text-sm font-bold text-slate-100 flex items-center space-x-2">
+                  <Edit3 className="h-4 w-4 text-cyan-400" />
+                  <span>Update Medical & Contact Information</span>
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setEditProfileMode(false)}
+                  className="p-1 text-slate-400 hover:text-slate-200"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Full Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={profileFormData.name}
+                    onChange={(e) => setProfileFormData(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Phone Number</label>
+                  <input
+                    type="text"
+                    required
+                    value={profileFormData.phone}
+                    onChange={(e) => setProfileFormData(prev => ({ ...prev, phone: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Blood Group</label>
+                  <select
+                    value={profileFormData.bloodGroup}
+                    onChange={(e) => setProfileFormData(prev => ({ ...prev, bloodGroup: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                  >
+                    {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map(bg => (
+                      <option key={bg} value={bg}>{bg}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Residential Address</label>
+                  <input
+                    type="text"
+                    required
+                    value={profileFormData.address}
+                    onChange={(e) => setProfileFormData(prev => ({ ...prev, address: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Allergies (comma-separated)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Penicillin, Peanuts, Latex"
+                    value={profileFormData.allergies}
+                    onChange={(e) => setProfileFormData(prev => ({ ...prev, allergies: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Chronic Conditions (comma-separated)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Hypertension, Type 2 Diabetes, Asthma"
+                    value={profileFormData.chronicConditions}
+                    onChange={(e) => setProfileFormData(prev => ({ ...prev, chronicConditions: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Emergency Contact Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Jane Doe (Spouse)"
+                    value={profileFormData.emergencyContactName}
+                    onChange={(e) => setProfileFormData(prev => ({ ...prev, emergencyContactName: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Emergency Contact Phone</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. +1 555-0199"
+                    value={profileFormData.emergencyContactPhone}
+                    onChange={(e) => setProfileFormData(prev => ({ ...prev, emergencyContactPhone: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Insurance Provider</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. BlueCross Shield / Aetna"
+                    value={profileFormData.insuranceProvider}
+                    onChange={(e) => setProfileFormData(prev => ({ ...prev, insuranceProvider: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Insurance Policy #</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. POL-9842104"
+                    value={profileFormData.insuranceNumber}
+                    onChange={(e) => setProfileFormData(prev => ({ ...prev, insuranceNumber: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setEditProfileMode(false)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={saveProfileLoading}
+                  className="flex items-center space-x-2 px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-lg"
+                >
+                  <Save className="h-4 w-4" />
+                  <span>{saveProfileLoading ? "Saving..." : "Save Medical Profile"}</span>
+                </button>
+              </div>
+            </form>
+          ) : profile ? (
+            /* PROFILE DISPLAY CARDS */
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              {/* Personal Information */}
+              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+                <div className="flex items-center space-x-2 text-xs font-bold text-cyan-400 uppercase tracking-wider">
+                  <UserIcon className="h-4 w-4" />
+                  <span>Personal Demographics</span>
+                </div>
+                <div className="space-y-3 text-xs">
+                  <div className="flex justify-between py-1.5 border-b border-slate-800/60">
+                    <span className="text-slate-400">Full Name</span>
+                    <span className="font-semibold text-slate-100">{profile.name}</span>
+                  </div>
+                  <div className="flex justify-between py-1.5 border-b border-slate-800/60">
+                    <span className="text-slate-400">Phone</span>
+                    <span className="font-semibold text-slate-100">{profile.phone}</span>
+                  </div>
+                  <div className="flex justify-between py-1.5 border-b border-slate-800/60">
+                    <span className="text-slate-400">Date of Birth</span>
+                    <span className="font-semibold text-slate-100">{new Date(profile.dob).toLocaleDateString()}</span>
+                  </div>
+                  <div className="flex justify-between py-1.5 border-b border-slate-800/60">
+                    <span className="text-slate-400">Gender</span>
+                    <span className="font-semibold text-slate-100">{profile.gender}</span>
+                  </div>
+                  <div className="flex justify-between py-1.5 border-b border-slate-800/60">
+                    <span className="text-slate-400">Blood Group</span>
+                    <span className="px-2 py-0.5 rounded bg-rose-950 text-rose-400 border border-rose-800/50 font-bold">{profile.bloodGroup}</span>
+                  </div>
+                  <div className="flex justify-between py-1.5">
+                    <span className="text-slate-400">Address</span>
+                    <span className="font-semibold text-slate-100 text-right max-w-xs">{profile.address}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Medical History & Allergies */}
+              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+                <div className="flex items-center space-x-2 text-xs font-bold text-amber-400 uppercase tracking-wider">
+                  <AlertTriangle className="h-4 w-4" />
+                  <span>Clinical Alerts & History</span>
+                </div>
+                <div className="space-y-4 text-xs">
+                  <div>
+                    <span className="text-slate-400 block mb-1.5 font-semibold">Known Allergies</span>
+                    {profile.allergies ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {profile.allergies.split(",").map((a, i) => (
+                          <span key={i} className="px-2.5 py-1 bg-rose-950/60 border border-rose-800/60 text-rose-300 rounded-lg text-[11px] font-medium">
+                            {a.trim()}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-slate-500 italic text-[11px]">No known allergies recorded</span>
+                    )}
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-800/60">
+                    <span className="text-slate-400 block mb-1.5 font-semibold">Chronic Medical Conditions</span>
+                    {profile.chronicConditions ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {profile.chronicConditions.split(",").map((c, i) => (
+                          <span key={i} className="px-2.5 py-1 bg-amber-950/60 border border-amber-800/60 text-amber-300 rounded-lg text-[11px] font-medium">
+                            {c.trim()}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-slate-500 italic text-[11px]">No chronic conditions recorded</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Emergency Contact */}
+              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+                <div className="flex items-center space-x-2 text-xs font-bold text-emerald-400 uppercase tracking-wider">
+                  <Phone className="h-4 w-4" />
+                  <span>Emergency Contact</span>
+                </div>
+                <div className="space-y-3 text-xs">
+                  <div className="flex justify-between py-1.5 border-b border-slate-800/60">
+                    <span className="text-slate-400">Contact Name</span>
+                    <span className="font-semibold text-slate-100">{profile.emergencyContactName || "Not provided"}</span>
+                  </div>
+                  <div className="flex justify-between py-1.5">
+                    <span className="text-slate-400">Emergency Phone</span>
+                    <span className="font-semibold text-slate-100">{profile.emergencyContactPhone || "Not provided"}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Insurance & Coverage */}
+              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+                <div className="flex items-center space-x-2 text-xs font-bold text-purple-400 uppercase tracking-wider">
+                  <Shield className="h-4 w-4" />
+                  <span>Insurance & Policy Coverage</span>
+                </div>
+                <div className="space-y-3 text-xs">
+                  <div className="flex justify-between py-1.5 border-b border-slate-800/60">
+                    <span className="text-slate-400">Insurance Provider</span>
+                    <span className="font-semibold text-slate-100">{profile.insuranceProvider || "Self-Pay / Not Registered"}</span>
+                  </div>
+                  <div className="flex justify-between py-1.5">
+                    <span className="text-slate-400">Policy Number</span>
+                    <span className="font-mono text-slate-200">{profile.insuranceNumber || "N/A"}</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {/* VITALS HISTORY TAB */}
+      {activeTab === "vitals" && (
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-xl font-bold text-slate-100 flex items-center space-x-2">
+              <Activity className="h-5 w-5 text-cyan-400" />
+              <span>Clinical Vitals History</span>
+            </h2>
+            <p className="text-xs text-slate-400 mt-1">
+              Historical physiological vitals recorded during your clinic check-ins and consultations.
+            </p>
+          </div>
+
+          {/* Latest Vitals Overview KPI if available */}
+          {vitalsList.length > 0 && (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-slate-900/90 border border-slate-800 p-4 rounded-2xl shadow-xl">
+                <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Blood Pressure</span>
+                <div className="text-xl font-extrabold text-slate-100 mt-1">
+                  {vitalsList[0].bloodPressure || "--/--"} <span className="text-xs text-slate-500 font-normal">mmHg</span>
+                </div>
+                <div className="text-[10px] text-cyan-400 mt-1">Latest Check-in</div>
+              </div>
+
+              <div className="bg-slate-900/90 border border-slate-800 p-4 rounded-2xl shadow-xl">
+                <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Pulse Rate</span>
+                <div className="text-xl font-extrabold text-emerald-400 mt-1">
+                  {vitalsList[0].pulse || "--"} <span className="text-xs text-slate-500 font-normal">bpm</span>
+                </div>
+                <div className="text-[10px] text-slate-500 mt-1">Resting Heart Rate</div>
+              </div>
+
+              <div className="bg-slate-900/90 border border-slate-800 p-4 rounded-2xl shadow-xl">
+                <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Blood Oxygen (SpO2)</span>
+                <div className="text-xl font-extrabold text-cyan-400 mt-1">
+                  {vitalsList[0].spo2 || "--"} <span className="text-xs text-slate-500 font-normal">%</span>
+                </div>
+                <div className="text-[10px] text-slate-500 mt-1">Oxygen Saturation</div>
+              </div>
+
+              <div className="bg-slate-900/90 border border-slate-800 p-4 rounded-2xl shadow-xl">
+                <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Body Mass Index (BMI)</span>
+                <div className="text-xl font-extrabold text-purple-400 mt-1">
+                  {vitalsList[0].bmi ? vitalsList[0].bmi.toFixed(1) : "--"}
+                </div>
+                <div className="text-[10px] text-slate-500 mt-1">
+                  {vitalsList[0].weight ? `${vitalsList[0].weight} kg` : ""} {vitalsList[0].height ? `• ${vitalsList[0].height} cm` : ""}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Vitals History List */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+            <div className="p-4 bg-slate-850 border-b border-slate-800 flex items-center justify-between">
+              <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider">Recorded Entries</h3>
+              <span className="text-[11px] text-slate-400">{vitalsList.length} records</span>
+            </div>
+
+            {vitalsLoading ? (
+              <div className="p-12 text-center text-slate-500 text-xs">Loading vitals history...</div>
+            ) : vitalsList.length === 0 ? (
+              <div className="p-12 text-center text-slate-500 text-xs">
+                No clinical vitals recorded yet. Vitals will appear here following your in-person clinic visits.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs text-slate-300">
+                  <thead className="bg-slate-950 text-slate-400 text-[11px] uppercase border-b border-slate-800">
+                    <tr>
+                      <th className="py-3 px-4">Date & Time</th>
+                      <th className="py-3 px-4">BP (mmHg)</th>
+                      <th className="py-3 px-4">Pulse (bpm)</th>
+                      <th className="py-3 px-4">Temp (°F)</th>
+                      <th className="py-3 px-4">SpO2 (%)</th>
+                      <th className="py-3 px-4">Weight (kg)</th>
+                      <th className="py-3 px-4">Height (cm)</th>
+                      <th className="py-3 px-4">BMI</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800">
+                    {vitalsList.map((v) => (
+                      <tr key={v.id} className="hover:bg-slate-850/50 transition-all">
+                        <td className="py-3 px-4 font-medium text-slate-200">
+                          {new Date(v.createdAt).toLocaleDateString()} {new Date(v.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </td>
+                        <td className="py-3 px-4 font-mono font-bold text-slate-100">
+                          {v.bloodPressure || "--"}
+                        </td>
+                        <td className="py-3 px-4 text-emerald-400 font-semibold">
+                          {v.pulse ? `${v.pulse} bpm` : "--"}
+                        </td>
+                        <td className="py-3 px-4 text-amber-400 font-semibold">
+                          {v.temperature ? `${v.temperature}°F` : "--"}
+                        </td>
+                        <td className="py-3 px-4 text-cyan-400 font-semibold">
+                          {v.spo2 ? `${v.spo2}%` : "--"}
+                        </td>
+                        <td className="py-3 px-4">{v.weight || "--"}</td>
+                        <td className="py-3 px-4">{v.height || "--"}</td>
+                        <td className="py-3 px-4">
+                          {v.bmi ? (
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              v.bmi < 18.5 
+                                ? "bg-cyan-950 text-cyan-400 border border-cyan-800" 
+                                : v.bmi < 25 
+                                ? "bg-emerald-950 text-emerald-400 border border-emerald-800" 
+                                : v.bmi < 30 
+                                ? "bg-amber-950 text-amber-400 border border-amber-800" 
+                                : "bg-rose-950 text-rose-400 border border-rose-800"
+                            }`}>
+                              {v.bmi.toFixed(1)}
+                            </span>
+                          ) : (
+                            "--"
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* AI SYMPTOM NAVIGATOR / CHATBOT TAB */}
       {activeTab === "ai-assistant" && (
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col h-[600px]">
@@ -400,32 +1006,69 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-slate-300 font-semibold mb-1">Date</label>
-                  <input
-                    type="date"
-                    required
-                    value={slotDate}
-                    onChange={(e) => setSlotDate(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-300 font-semibold mb-1">Time Slot</label>
-                  <select
-                    value={slotTime}
-                    onChange={(e) => setSlotTime(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
-                  >
-                    <option value="09:00">09:00 AM</option>
-                    <option value="10:00">10:00 AM</option>
-                    <option value="11:00">11:00 AM</option>
-                    <option value="14:00">02:00 PM</option>
-                    <option value="15:00">03:00 PM</option>
-                  </select>
-                </div>
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">Appointment Date</label>
+                <input
+                  type="date"
+                  required
+                  min={new Date().toISOString().split("T")[0]}
+                  value={slotDate}
+                  onChange={(e) => setSlotDate(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                />
               </div>
+
+              {/* Dynamic Doctor Slots Grid */}
+              {selectedDoctorId && slotDate && (
+                <div className="space-y-2">
+                  <label className="block text-slate-300 font-semibold">
+                    Available Consultation Slots {availableSlots.length > 0 && `(${availableSlots.filter(s => s.available).length} Open)`}
+                  </label>
+
+                  {slotsLoading ? (
+                    <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 text-center text-slate-400 text-xs flex items-center justify-center space-x-2">
+                      <div className="h-3 w-3 rounded-full bg-cyan-400 animate-ping" />
+                      <span>Checking doctor calendar & available slots...</span>
+                    </div>
+                  ) : slotsMessage ? (
+                    <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-300 rounded-xl text-xs flex items-center space-x-2">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      <span>{slotsMessage}</span>
+                    </div>
+                  ) : availableSlots.length === 0 ? (
+                    <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl text-slate-400 text-xs text-center">
+                      No slots generated for this date.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5 max-h-48 overflow-y-auto pr-1">
+                      {availableSlots.map((slot, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          disabled={!slot.available}
+                          onClick={() => setSelectedSlotDateTime(slot.slotDateTime)}
+                          className={`py-2 px-1 rounded-lg text-[11px] font-bold transition-all text-center ${
+                            selectedSlotDateTime === slot.slotDateTime
+                              ? "bg-cyan-500 text-slate-950 ring-2 ring-cyan-300 shadow-md"
+                              : slot.available
+                              ? "bg-slate-950 border border-slate-800 text-slate-200 hover:border-cyan-500/60 hover:bg-slate-850"
+                              : "bg-slate-950/40 border border-slate-900 text-slate-600 cursor-not-allowed opacity-50 line-through"
+                          }`}
+                        >
+                          {slot.time}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {selectedSlotDateTime && (
+                    <div className="text-[11px] text-cyan-400 font-semibold flex items-center space-x-1">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      <span>Selected Slot: {new Date(selectedSlotDateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} on {slotDate}</span>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="block text-slate-300 font-semibold mb-1">Reason for Visit / Symptoms</label>
