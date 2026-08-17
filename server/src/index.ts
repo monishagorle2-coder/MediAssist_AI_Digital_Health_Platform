@@ -11,6 +11,8 @@ import diagnosisRoutes from "./routes/diagnosis";
 import aiRoutes from "./routes/ai";
 import pharmacyRoutes from "./routes/pharmacy";
 import hospitalRoutes from "./routes/hospital";
+import labRoutes from "./routes/lab";
+import billingRoutes from "./routes/billing";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -48,7 +50,9 @@ app.use("/api/appointments", appointmentRoutes);
 app.use("/api/diagnosis", diagnosisRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/pharmacy", pharmacyRoutes);
-app.use("/api", hospitalRoutes); // Mounts general hospital, billing, admin stats
+app.use("/api/lab", labRoutes);
+app.use("/api/bills", billingRoutes);
+app.use("/api", hospitalRoutes); // Mounts general hospital, departments, patients, admin stats
 
 // Health check
 app.get("/health", (req, res) => {

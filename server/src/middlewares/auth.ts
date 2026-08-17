@@ -3,11 +3,13 @@ import jwt from "jsonwebtoken";
 
 const JWT_SECRET = process.env.JWT_SECRET || "mediassist_super_secret_jwt_key_12345";
 
+export type UserRole = "PATIENT" | "DOCTOR" | "RECEPTIONIST" | "PHARMACIST" | "LAB_TECHNICIAN" | "ADMIN";
+
 export interface AuthenticatedRequest extends Request {
   user?: {
     id: string;
     email: string;
-    role: "PATIENT" | "DOCTOR" | "RECEPTIONIST" | "PHARMACIST" | "ADMIN";
+    role: UserRole;
     patientId?: string;
     doctorId?: string;
   };
@@ -37,7 +39,7 @@ export function authenticateToken(req: AuthenticatedRequest, res: Response, next
   });
 }
 
-export function requireRoles(roles: Array<"PATIENT" | "DOCTOR" | "RECEPTIONIST" | "PHARMACIST" | "ADMIN">) {
+export function requireRoles(roles: Array<UserRole>) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ error: "Unauthorized" });

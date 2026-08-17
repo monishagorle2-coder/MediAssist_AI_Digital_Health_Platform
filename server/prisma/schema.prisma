@@ -43,6 +43,7 @@ model Patient {
   insuranceProvider String?
   insuranceNumber  String?
   vitals           Vitals[]
+  labOrders        LabOrder[]
 }
 
 model Doctor {
@@ -62,6 +63,7 @@ model Doctor {
   diagnosisRecords DiagnosisRecord[]
   prescriptions    Prescription[]
   doctorSchedules  DoctorSchedule[]
+  labOrders        LabOrder[]
 }
 
 model Department {
@@ -94,6 +96,7 @@ model Appointment {
   prescription            Prescription?
   bill                    Bill?
   vitals                  Vitals[]
+  labOrders               LabOrder[]
 }
 
 model DiagnosisRecord {
@@ -113,7 +116,8 @@ model DiagnosisRecord {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   prescriptions  Prescription[]
-  aiSuggestions String? // JSON payload from AI suggestions
+  aiSuggestions  String? // JSON payload from AI suggestions
+  labOrders      LabOrder[]
 }
 
 model Medicine {
@@ -150,17 +154,41 @@ model Prescription {
 }
 
 model Bill {
-  id            String       @id @default(uuid())
-  appointmentId String?      @unique
-  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
-  patientId     String
-  patient       Patient      @relation(fields: [patientId], references: [id])
-  amount        Float
-  status        String       @default("PENDING") // "PENDING" | "PAID"
-  items         String       // JSON string array
-  paidAt        DateTime?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  id                   String       @id @default(uuid())
+  invoiceNumber        String?      @unique
+  appointmentId        String?      @unique
+  appointment          Appointment? @relation(fields: [appointmentId], references: [id])
+  patientId            String
+  patient              Patient      @relation(fields: [patientId], references: [id])
+  amount               Float        // total amount
+  subtotal             Float?
+  taxRate              Float?       @default(0)
+  taxAmount            Float?       @default(0)
+  discountAmount       Float?       @default(0)
+  totalAmount          Float?
+  status               String       @default("PENDING") // "PENDING" | "PAID"
+  paymentStatus        String       @default("PENDING") // "PENDING" | "PAID" | "PARTIALLY_PAID" | "CANCELLED" | "REFUNDED"
+  paymentMethod        String?      // "CASH" | "CARD" | "UPI" | "INSURANCE"
+  paidAt               DateTime?
+  transactionReference String?
+  notes                String?
+  items                String       // JSON string array for backward compatibility
+  billItems            BillItem[]
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+}
+
+model BillItem {
+  id          String   @id @default(uuid())
+  billId      String
+  bill        Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+  description String
+  category    String   // "CONSULTATION" | "PHARMACY" | "LABORATORY" | "PROCEDURE" | "OTHER"
+  quantity    Int      @default(1)
+  unitPrice   Float
+  amount      Float
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model AuditLog {
@@ -214,5 +242,60 @@ model DoctorSchedule {
   updatedAt    DateTime @updatedAt
 
   @@unique([doctorId, dayOfWeek])
+}
+
+model LabTest {
+  id             String     @id @default(uuid())
+  name           String     @unique
+  code           String     @unique // e.g. "CBC", "LFT", "KFT", "LIPID", "COVID-RT-PCR"
+  category       String     // "Hematology", "Biochemistry", "Microbiology", "Pathology", "Radiology"
+  description    String?
+  sampleType     String     // "Blood", "Serum", "Plasma", "Urine", "Swab"
+  price          Float
+  tatHours       Int        @default(24) // Turnaround time in hours
+  referenceRange String?    // Default reference parameters or description
+  unit           String?    // Default unit
+  isActive       Boolean    @default(true)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  labOrders      LabOrder[]
+}
+
+model LabOrder {
+  id                String           @id @default(uuid())
+  orderNumber       String           @unique // e.g. "LAB-2026-0001"
+  patientId         String
+  patient           Patient          @relation(fields: [patientId], references: [id])
+  doctorId          String
+  doctor            Doctor           @relation(fields: [doctorId], references: [id])
+  appointmentId     String?
+  appointment       Appointment?     @relation(fields: [appointmentId], references: [id])
+  diagnosisRecordId String?
+  diagnosisRecord   DiagnosisRecord? @relation(fields: [diagnosisRecordId], references: [id])
+  labTestId         String
+  labTest           LabTest          @relation(fields: [labTestId], references: [id])
+  status            String           @default("ORDERED") // "ORDERED" | "SAMPLE_COLLECTED" | "PROCESSING" | "COMPLETED" | "CANCELLED"
+  priority          String           @default("ROUTINE") // "ROUTINE" | "URGENT" | "STAT"
+  clinicalNotes     String?
+  sampleCollectedAt DateTime?
+  sampleCollectedBy String?
+  completedAt       DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  labResult         LabResult?
+}
+
+model LabResult {
+  id               String    @id @default(uuid())
+  labOrderId       String    @unique
+  labOrder         LabOrder  @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
+  parameterResults String    // JSON string array: [{ parameter: string, value: string, unit: string, referenceRange: string, flag: 'NORMAL' | 'HIGH' | 'LOW' | 'ABNORMAL' }]
+  summary          String    // Overall interpretation / clinical impression
+  remarks          String?
+  testedBy         String?   // Technician name or ID
+  approvedBy       String?   // Doctor / Pathologist name or ID
+  resultDate       DateTime  @default(now())
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 }
 

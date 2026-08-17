@@ -2,6 +2,7 @@ import { Router, Response } from "express";
 import { z } from "zod";
 import prisma from "../db";
 import { AuthenticatedRequest, authenticateToken, requireRoles } from "../middlewares/auth";
+import { generateInvoiceNumber } from "./billing";
 
 const router = Router();
 
@@ -692,16 +693,35 @@ router.post("/", authenticateToken as any, async (req: AuthenticatedRequest, res
       },
     });
 
-    // Create a pending Bill immediately
+    // Create a pending Bill with invoice number and itemized structure
+    const invoiceNumber = await generateInvoiceNumber();
     await prisma.bill.create({
-      data: {
-        appointmentId: appointment.id,
-        patientId,
-        amount: 150.0, // Standard consultation charge
-        status: "PENDING",
-        items: JSON.stringify([{ description: "General Consultation Fee", cost: 150.0 }]),
-      },
-    });
+       data: {
+         invoiceNumber,
+         appointmentId: appointment.id,
+         patientId,
+         amount: 150.0, // Standard consultation charge
+         subtotal: 150.0,
+         taxRate: 0,
+         taxAmount: 0,
+         discountAmount: 0,
+         totalAmount: 150.0,
+         status: "PENDING",
+         paymentStatus: "PENDING",
+         items: JSON.stringify([{ description: "General Consultation Fee", cost: 150.0 }]),
+         billItems: {
+           create: [
+             {
+               description: `Physician Consultation - ${appointment.doctor.name} (${appointment.doctor.department?.name || "General Practice"})`,
+               category: "CONSULTATION",
+               quantity: 1,
+               unitPrice: 150.0,
+               amount: 150.0,
+             },
+           ],
+         },
+       },
+     });
 
     res.status(201).json(appointment);
   } catch (error: any) {

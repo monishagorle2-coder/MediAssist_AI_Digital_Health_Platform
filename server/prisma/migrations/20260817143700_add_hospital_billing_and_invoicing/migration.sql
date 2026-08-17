@@ -1,0 +1,37 @@
+-- AlterTable
+ALTER TABLE "Bill" ADD COLUMN IF NOT EXISTS "invoiceNumber" TEXT,
+ADD COLUMN IF NOT EXISTS "subtotal" DOUBLE PRECISION,
+ADD COLUMN IF NOT EXISTS "taxRate" DOUBLE PRECISION DEFAULT 0,
+ADD COLUMN IF NOT EXISTS "taxAmount" DOUBLE PRECISION DEFAULT 0,
+ADD COLUMN IF NOT EXISTS "discountAmount" DOUBLE PRECISION DEFAULT 0,
+ADD COLUMN IF NOT EXISTS "totalAmount" DOUBLE PRECISION,
+ADD COLUMN IF NOT EXISTS "paymentStatus" TEXT NOT NULL DEFAULT 'PENDING',
+ADD COLUMN IF NOT EXISTS "paymentMethod" TEXT,
+ADD COLUMN IF NOT EXISTS "transactionReference" TEXT,
+ADD COLUMN IF NOT EXISTS "notes" TEXT;
+
+-- CreateTable
+CREATE TABLE IF NOT EXISTS "BillItem" (
+    "id" TEXT NOT NULL,
+    "billId" TEXT NOT NULL,
+    "description" TEXT NOT NULL,
+    "category" TEXT NOT NULL,
+    "quantity" INTEGER NOT NULL DEFAULT 1,
+    "unitPrice" DOUBLE PRECISION NOT NULL,
+    "amount" DOUBLE PRECISION NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "BillItem_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX IF NOT EXISTS "Bill_invoiceNumber_key" ON "Bill"("invoiceNumber");
+
+-- AddForeignKey
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'BillItem_billId_fkey') THEN
+        ALTER TABLE "BillItem" ADD CONSTRAINT "BillItem_billId_fkey" FOREIGN KEY ("billId") REFERENCES "Bill"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+    END IF;
+END $$;

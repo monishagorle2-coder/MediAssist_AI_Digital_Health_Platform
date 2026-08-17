@@ -55,6 +55,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
               <span>Medical Records</span>
             </button>
             <button
+              onClick={() => setActiveTab("lab-reports")}
+              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                activeTab === "lab-reports"
+                  ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/30"
+                  : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+              }`}
+            >
+              <Activity className="h-4 w-4 text-cyan-400" />
+              <span>Diagnostic Reports</span>
+            </button>
+            <button
               onClick={() => setActiveTab("vitals")}
               className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
                 activeTab === "vitals"
@@ -88,6 +99,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
               <span>My Medical Profile</span>
             </button>
             <button
+              onClick={() => setActiveTab("billing")}
+              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                activeTab === "billing"
+                  ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/30"
+                  : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+              }`}
+            >
+              <CreditCard className="h-4 w-4 text-cyan-400" />
+              <span>Billing & Invoices</span>
+            </button>
+            <button
               onClick={() => setActiveTab("ai-assistant")}
               className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
                 activeTab === "ai-assistant"
@@ -114,6 +136,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
             >
               <Stethoscope className="h-4 w-4" />
               <span>Patient Queue</span>
+            </button>
+            <button
+              onClick={() => setActiveTab("diagnostics")}
+              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                activeTab === "diagnostics"
+                  ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/30"
+                  : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+              }`}
+            >
+              <FileSpreadsheet className="h-4 w-4 text-cyan-400" />
+              <span>Lab Orders & Reports</span>
             </button>
             <button
               onClick={() => setActiveTab("ai-decision-support")}
@@ -203,6 +236,34 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
             >
               <FileSpreadsheet className="h-4 w-4" />
               <span>Medicine Inventory</span>
+            </button>
+          </>
+        );
+
+      case "LAB_TECHNICIAN":
+        return (
+          <>
+            <button
+              onClick={() => setActiveTab("queue")}
+              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                activeTab === "queue"
+                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+                  : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+              }`}
+            >
+              <Activity className="h-4 w-4" />
+              <span>Lab Queue & Analysis</span>
+            </button>
+            <button
+              onClick={() => setActiveTab("catalog")}
+              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                activeTab === "catalog"
+                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+                  : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+              }`}
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              <span>Diagnostic Catalog</span>
             </button>
           </>
         );

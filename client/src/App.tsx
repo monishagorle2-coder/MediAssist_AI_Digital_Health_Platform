@@ -7,6 +7,7 @@ import { PatientDashboard } from "./pages/PatientDashboard";
 import { DoctorDashboard } from "./pages/DoctorDashboard";
 import { ReceptionistDashboard } from "./pages/ReceptionistDashboard";
 import { PharmacistDashboard } from "./pages/PharmacistDashboard";
+import { LaboratoryDashboard } from "./pages/LaboratoryDashboard";
 import { AdminDashboard } from "./pages/AdminDashboard";
 
 const MainApp: React.FC = () => {
@@ -32,13 +33,15 @@ const MainApp: React.FC = () => {
   const getDefaultTabForRole = () => {
     switch (user.role) {
       case "PATIENT":
-        return ["appointments", "reports", "prescriptions", "vitals", "profile", "ai-assistant"].includes(activeTab) ? activeTab : "appointments";
+        return ["appointments", "reports", "lab-reports", "prescriptions", "vitals", "profile", "ai-assistant"].includes(activeTab) ? activeTab : "appointments";
       case "DOCTOR":
-        return ["queue", "ai-decision-support", "prescriptions"].includes(activeTab) ? activeTab : "queue";
+        return ["queue", "diagnostics", "ai-decision-support", "prescriptions"].includes(activeTab) ? activeTab : "queue";
       case "RECEPTIONIST":
         return ["schedule", "register", "billing"].includes(activeTab) ? activeTab : "schedule";
       case "PHARMACIST":
         return ["prescriptions", "inventory"].includes(activeTab) ? activeTab : "prescriptions";
+      case "LAB_TECHNICIAN":
+        return ["queue", "catalog"].includes(activeTab) ? activeTab : "queue";
       case "ADMIN":
         return ["overview", "users", "audit-logs"].includes(activeTab) ? activeTab : "overview";
       default:
@@ -58,6 +61,8 @@ const MainApp: React.FC = () => {
         return <ReceptionistDashboard activeTab={currentTab} />;
       case "PHARMACIST":
         return <PharmacistDashboard activeTab={currentTab} />;
+      case "LAB_TECHNICIAN":
+        return <LaboratoryDashboard activeTab={currentTab} />;
       case "ADMIN":
         return <AdminDashboard activeTab={currentTab} />;
       default:

@@ -2,6 +2,7 @@ import { Router, Response } from "express";
 import { z } from "zod";
 import prisma from "../db";
 import { AuthenticatedRequest, authenticateToken, requireRoles } from "../middlewares/auth";
+import { generateInvoiceNumber } from "./billing";
 
 const router = Router();
 
@@ -262,22 +263,60 @@ router.put("/prescriptions/:id/dispense", authenticateToken as any, requireRoles
 
       // 5. Update or add bill items
       if (prescription.appointmentId && billingItems.length > 0) {
-        const existingBill = await tx.bill.findUnique({
+        let existingBill = await tx.bill.findUnique({
           where: { appointmentId: prescription.appointmentId },
         });
 
+        if (!existingBill) {
+          const invoiceNumber = await generateInvoiceNumber(tx);
+          existingBill = await tx.bill.create({
+            data: {
+              invoiceNumber,
+              appointmentId: prescription.appointmentId,
+              patientId: prescription.patientId,
+              amount: totalCost,
+              subtotal: totalCost,
+              taxRate: 0,
+              taxAmount: 0,
+              discountAmount: 0,
+              totalAmount: totalCost,
+              status: "PENDING",
+              paymentStatus: "PENDING",
+              items: JSON.stringify(billingItems),
+            },
+          });
+        }
+
         if (existingBill) {
+          // Add BillItem records
+          for (const item of billingItems) {
+            await tx.billItem.create({
+              data: {
+                billId: existingBill.id,
+                description: item.description,
+                category: "PHARMACY",
+                quantity: 1,
+                unitPrice: item.cost,
+                amount: item.cost,
+              },
+            });
+          }
+
           const prevItems =
             typeof existingBill.items === "string"
               ? JSON.parse(existingBill.items)
-              : existingBill.items;
+              : existingBill.items || [];
           const updatedItems = [...prevItems, ...billingItems];
-          const updatedAmount = existingBill.amount + totalCost;
+          const updatedSubtotal = (existingBill.subtotal ?? existingBill.amount) + totalCost;
+          const updatedTotal = (existingBill.totalAmount ?? existingBill.amount) + totalCost;
+
           await tx.bill.update({
             where: { id: existingBill.id },
             data: {
               items: JSON.stringify(updatedItems),
-              amount: updatedAmount,
+              subtotal: updatedSubtotal,
+              totalAmount: updatedTotal,
+              amount: updatedTotal,
             },
           });
         }

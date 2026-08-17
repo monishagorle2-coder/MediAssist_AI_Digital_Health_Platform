@@ -437,8 +437,15 @@ router.get("/admin/stats", authenticateToken as any, requireRoles(["ADMIN"]), as
     const confirmedDiagnosisCount = await prisma.diagnosisRecord.count({ where: { status: "CONFIRMED" } });
     
     // Revenue sum
-    const paidBills = await prisma.bill.findMany({ where: { status: "PAID" } });
-    const totalRevenue = paidBills.reduce((sum, b) => sum + b.amount, 0);
+    const paidBills = await prisma.bill.findMany({
+      where: {
+        OR: [
+          { status: "PAID" },
+          { paymentStatus: "PAID" },
+        ],
+      },
+    });
+    const totalRevenue = paidBills.reduce((sum, b) => sum + (b.totalAmount ?? b.amount), 0);
 
     // Low stock count
     const lowStockCount = await prisma.medicine.count({

@@ -68,3 +68,29 @@ body {
 .glow-emerald {
   box-shadow: 0 0 20px rgba(16, 185, 129, 0.2);
 }
+
+/* Printable Invoice Styles */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #printable-invoice, #printable-invoice * {
+    visibility: visible;
+  }
+  #printable-invoice {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 24px;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
+

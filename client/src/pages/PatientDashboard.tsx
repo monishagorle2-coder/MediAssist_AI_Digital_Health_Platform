@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import api from "../services/api";
-import type { Appointment, DiagnosisRecord, Prescription, Doctor, Patient, Vitals } from "../types";
+import type { Appointment, DiagnosisRecord, Prescription, Doctor, Patient, Vitals, LabOrder, Bill } from "../types";
+import { InvoiceModal } from "../components/InvoiceModal";
 import { 
   Calendar, 
   FileText, 
@@ -18,7 +19,13 @@ import {
   Save, 
   X, 
   Phone, 
-  AlertTriangle 
+  AlertTriangle,
+  FlaskConical,
+  Clock,
+  CreditCard,
+  Receipt,
+  Printer,
+  TrendingUp
 } from "lucide-react";
 
 interface PatientDashboardProps {
@@ -28,6 +35,12 @@ interface PatientDashboardProps {
 export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab }) => {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [reports, setReports] = useState<DiagnosisRecord[]>([]);
+  const [labOrders, setLabOrders] = useState<LabOrder[]>([]);
+  const [bills, setBills] = useState<Bill[]>([]);
+  const [selectedPatientInvoice, setSelectedPatientInvoice] = useState<Bill | null>(null);
+  const [billingLoading, setBillingLoading] = useState(false);
+  const [viewPatientLabReport, setViewPatientLabReport] = useState<LabOrder | null>(null);
+  const [labLoading, setLabLoading] = useState(false);
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
 
@@ -88,11 +101,25 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
         const docRes = await api.get("/doctors");
         setDoctors(docRes.data);
       } else if (activeTab === "reports") {
-        const repRes = await api.get("/diagnosis");
+        const [repRes, labRes] = await Promise.all([
+          api.get("/diagnosis"),
+          api.get("/lab/orders"),
+        ]);
         setReports(repRes.data);
+        setLabOrders(labRes.data);
+      } else if (activeTab === "lab-reports") {
+        setLabLoading(true);
+        const labRes = await api.get("/lab/orders");
+        setLabOrders(labRes.data);
+        setLabLoading(false);
       } else if (activeTab === "prescriptions") {
         const presRes = await api.get("/pharmacy/prescriptions");
         setPrescriptions(presRes.data);
+      } else if (activeTab === "billing") {
+        setBillingLoading(true);
+        const billRes = await api.get("/bills");
+        setBills(billRes.data);
+        setBillingLoading(false);
       } else if (activeTab === "profile") {
         setProfileLoading(true);
         const profRes = await api.get("/patients/me");
@@ -406,6 +433,106 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
         </div>
       )}
 
+      {/* DIAGNOSTIC & LAB REPORTS TAB */}
+      {activeTab === "lab-reports" && (
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-xl font-bold text-slate-100 flex items-center space-x-2">
+              <FlaskConical className="h-5 w-5 text-cyan-400" />
+              <span>My Diagnostic & Laboratory Reports</span>
+            </h2>
+            <p className="text-xs text-slate-400 mt-1">
+              Review pathology investigations, specimen accessioning status, and signed diagnostic reports.
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            {labLoading ? (
+              <div className="p-8 text-center text-xs text-slate-500">
+                Loading your diagnostic reports...
+              </div>
+            ) : labOrders.length === 0 ? (
+              <div className="p-8 text-center bg-slate-900/50 border border-slate-800 rounded-2xl text-slate-500 text-xs">
+                No diagnostic test orders on file. Laboratory orders prescribed by your physician will appear here.
+              </div>
+            ) : (
+              labOrders.map((order) => (
+                <div key={order.id} className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <span className="font-mono font-bold text-xs text-cyan-400">{order.orderNumber}</span>
+                        <span className={`px-2 py-0.5 text-[9px] font-bold rounded-md uppercase ${
+                          order.priority === "STAT"
+                            ? "bg-rose-500/20 text-rose-400 border border-rose-500/30"
+                            : order.priority === "URGENT"
+                            ? "bg-orange-500/20 text-orange-400 border border-orange-500/30"
+                            : "bg-slate-800 text-slate-400 border border-slate-700"
+                        }`}>
+                          {order.priority}
+                        </span>
+                      </div>
+                      <h4 className="font-bold text-slate-100 text-base mt-1">{order.labTest?.name}</h4>
+                      <div className="text-xs text-slate-400">
+                        Ordering Doctor: <span className="text-slate-200 font-medium">{order.doctor?.name}</span> • Category: {order.labTest?.category}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-3">
+                      <span className={`px-2.5 py-1 text-[10px] font-bold rounded-full border inline-flex items-center space-x-1 ${
+                        order.status === "COMPLETED"
+                          ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                          : order.status === "SAMPLE_COLLECTED"
+                          ? "bg-cyan-500/20 text-cyan-400 border-cyan-500/30"
+                          : "bg-amber-500/20 text-amber-400 border-amber-500/30"
+                      }`}>
+                        {order.status === "COMPLETED" && <CheckCircle2 className="h-3 w-3" />}
+                        {order.status === "SAMPLE_COLLECTED" && <FlaskConical className="h-3 w-3" />}
+                        {order.status === "ORDERED" && <Clock className="h-3 w-3" />}
+                        <span>{order.status.replace("_", " ")}</span>
+                      </span>
+
+                      {order.status === "COMPLETED" && (
+                        <button
+                          onClick={() => setViewPatientLabReport(order)}
+                          className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs shadow-lg transition-all flex items-center space-x-1.5"
+                        >
+                          <FileText className="h-4 w-4" />
+                          <span>View Official Report</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs bg-slate-950 p-3 rounded-xl border border-slate-850">
+                    <div>
+                      <span className="text-slate-500 block text-[10px] uppercase font-bold">Sample Type</span>
+                      <span className="text-slate-300 font-semibold">{order.labTest?.sampleType}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px] uppercase font-bold">Ordered Date</span>
+                      <span className="text-slate-300 font-semibold">{new Date(order.createdAt).toLocaleDateString()}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px] uppercase font-bold">Report Status</span>
+                      <span className="text-emerald-400 font-semibold">
+                        {order.status === "COMPLETED" ? "Published & Verified" : "Specimen In Process"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {order.clinicalNotes && (
+                    <div className="text-xs text-slate-400 bg-slate-950/60 p-2.5 rounded-lg border border-slate-850">
+                      <strong className="text-slate-300">Doctor Instructions: </strong>{order.clinicalNotes}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
       {/* PRESCRIPTIONS TAB */}
       {activeTab === "prescriptions" && (
         <div className="space-y-6">
@@ -463,6 +590,179 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
                   )}
                 </div>
               ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* BILLING & INVOICES TAB */}
+      {activeTab === "billing" && (
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-xl font-bold text-slate-100 flex items-center space-x-2">
+              <Receipt className="h-5 w-5 text-cyan-400" />
+              <span>My Hospital Invoices, Bills & Receipts</span>
+            </h2>
+            <p className="text-xs text-slate-400 mt-1">
+              Review itemized charges for doctor consultations, pharmacy prescriptions, and diagnostic lab investigations.
+            </p>
+          </div>
+
+          {/* Financial Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="bg-slate-900/90 border border-slate-800 p-4 rounded-2xl space-y-1">
+              <div className="flex items-center justify-between text-slate-400">
+                <span className="text-xs font-semibold">Total Incurred</span>
+                <Receipt className="h-4 w-4 text-purple-400" />
+              </div>
+              <div className="text-2xl font-black text-slate-100 font-mono">
+                ${bills
+                  .filter((b) => b.status !== "CANCELLED" && b.paymentStatus !== "CANCELLED")
+                  .reduce((sum, b) => sum + (b.totalAmount ?? b.amount), 0)
+                  .toFixed(2)}
+              </div>
+              <span className="text-[10px] text-slate-500">{bills.length} total hospital invoices</span>
+            </div>
+
+            <div className="bg-slate-900/90 border border-slate-800 p-4 rounded-2xl space-y-1">
+              <div className="flex items-center justify-between text-slate-400">
+                <span className="text-xs font-semibold">Paid & Cleared</span>
+                <TrendingUp className="h-4 w-4 text-emerald-400" />
+              </div>
+              <div className="text-2xl font-black text-emerald-400 font-mono">
+                ${bills
+                  .filter((b) => b.status === "PAID" || b.paymentStatus === "PAID")
+                  .reduce((sum, b) => sum + (b.totalAmount ?? b.amount), 0)
+                  .toFixed(2)}
+              </div>
+              <span className="text-[10px] text-slate-500">
+                {bills.filter((b) => b.status === "PAID" || b.paymentStatus === "PAID").length} invoices paid
+              </span>
+            </div>
+
+            <div className="bg-slate-900/90 border border-slate-800 p-4 rounded-2xl space-y-1">
+              <div className="flex items-center justify-between text-slate-400">
+                <span className="text-xs font-semibold">Outstanding Due</span>
+                <Clock className="h-4 w-4 text-amber-400" />
+              </div>
+              <div className="text-2xl font-black text-amber-400 font-mono">
+                ${bills
+                  .filter((b) => b.status === "PENDING" || b.paymentStatus === "PENDING")
+                  .reduce((sum, b) => sum + (b.totalAmount ?? b.amount), 0)
+                  .toFixed(2)}
+              </div>
+              <span className="text-[10px] text-slate-500">
+                {bills.filter((b) => b.status === "PENDING" || b.paymentStatus === "PENDING").length} pending payments
+              </span>
+            </div>
+          </div>
+
+          {/* Invoices List */}
+          <div className="space-y-4">
+            {billingLoading ? (
+              <div className="p-8 text-center text-xs text-slate-500">Loading your hospital invoices...</div>
+            ) : bills.length === 0 ? (
+              <div className="p-8 text-center bg-slate-900/50 border border-slate-800 rounded-2xl text-slate-500 text-xs">
+                No invoices found on record.
+              </div>
+            ) : (
+              bills.map((bill) => {
+                const isPaid = bill.status === "PAID" || bill.paymentStatus === "PAID";
+                const isCancelled = bill.status === "CANCELLED" || bill.paymentStatus === "CANCELLED";
+                const items = bill.billItems && bill.billItems.length > 0
+                  ? bill.billItems
+                  : (Array.isArray(bill.items) ? bill.items : []);
+
+                return (
+                  <div key={bill.id} className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                      <div>
+                        <div className="flex items-center space-x-2">
+                          <span className="font-mono font-bold text-xs text-cyan-400">
+                            {bill.invoiceNumber || `INV-${bill.id.slice(0, 8).toUpperCase()}`}
+                          </span>
+                          <span className="text-xs text-slate-500">
+                            Issued: {new Date(bill.createdAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <h4 className="font-bold text-slate-100 text-sm mt-0.5">
+                          {bill.appointment?.doctor ? `Consultation with ${bill.appointment.doctor.name}` : "Hospital Services & Medications"}
+                        </h4>
+                      </div>
+
+                      <div className="flex items-center space-x-3">
+                        <span className={`px-2.5 py-1 text-[10px] font-bold rounded-full border inline-flex items-center space-x-1 ${
+                          isPaid
+                            ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                            : isCancelled
+                            ? "bg-rose-500/20 text-rose-400 border-rose-500/30"
+                            : "bg-amber-500/20 text-amber-400 border-amber-500/30"
+                        }`}>
+                          {isPaid && <CheckCircle2 className="h-3 w-3" />}
+                          <span>{bill.paymentStatus || bill.status}</span>
+                        </span>
+
+                        <button
+                          onClick={() => setSelectedPatientInvoice(bill)}
+                          className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-semibold text-xs border border-slate-700 flex items-center space-x-1.5 transition-all"
+                        >
+                          <Printer className="h-3.5 w-3.5 text-cyan-400" />
+                          <span>View / Print</span>
+                        </button>
+
+                        {!isPaid && !isCancelled && (
+                          <button
+                            onClick={() => setSelectedPatientInvoice(bill)}
+                            className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-bold text-xs shadow-lg transition-all flex items-center space-x-1"
+                          >
+                            <CreditCard className="h-3.5 w-3.5" />
+                            <span>Pay Online</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Itemized badges */}
+                    <div className="flex flex-wrap gap-1.5">
+                      {items.map((item: any, idx: number) => (
+                        <span key={idx} className="px-2.5 py-1 bg-slate-950 rounded-lg text-slate-300 text-xs border border-slate-850">
+                          <strong className="text-slate-400">{item.category || "SERVICE"}:</strong> {item.description} (${(item.amount || item.cost || 0).toFixed(2)})
+                        </span>
+                      ))}
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs bg-slate-950 p-3 rounded-xl border border-slate-850 gap-2">
+                      <div className="text-slate-400">
+                        {isPaid && bill.paidAt ? (
+                          <span className="text-emerald-400">
+                            Paid via <strong className="uppercase">{bill.paymentMethod || "CASH"}</strong> on {new Date(bill.paidAt).toLocaleDateString()}
+                            {bill.transactionReference && ` • Ref: ${bill.transactionReference}`}
+                          </span>
+                        ) : isCancelled ? (
+                          <span className="text-rose-400">Invoice was cancelled</span>
+                        ) : (
+                          <span>Payment required to settle this hospital bill</span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center space-x-3 text-right">
+                        {bill.taxAmount && bill.taxAmount > 0 ? (
+                          <span className="text-[11px] text-slate-500">Tax: +${bill.taxAmount.toFixed(2)}</span>
+                        ) : null}
+                        {bill.discountAmount && bill.discountAmount > 0 ? (
+                          <span className="text-[11px] text-emerald-400">Discount: -${bill.discountAmount.toFixed(2)}</span>
+                        ) : null}
+                        <div>
+                          <span className="text-[10px] text-slate-500 uppercase block font-bold">Total Amount</span>
+                          <span className="text-base font-extrabold text-cyan-400 font-mono">
+                            ${(bill.totalAmount ?? bill.amount).toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
         </div>
@@ -1103,6 +1403,118 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
         </div>
       )}
 
+      {/* PATIENT VIEW LAB REPORT MODAL */}
+      {viewPatientLabReport && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                  <FlaskConical className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-100">{viewPatientLabReport.labTest?.name}</h3>
+                  <p className="text-xs text-slate-400 font-mono">
+                    Report ID: {viewPatientLabReport.orderNumber} • Status: SIGNED & FINAL
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setViewPatientLabReport(null)} className="text-slate-400 hover:text-slate-200">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-850 text-xs">
+              <div>
+                <span className="text-slate-500 block">Attending / Ordering Doctor:</span>
+                <span className="font-bold text-cyan-400">{viewPatientLabReport.doctor?.name}</span>
+                <span className="text-slate-400 block text-[11px]">{viewPatientLabReport.doctor?.department?.name || "General Care"}</span>
+              </div>
+              <div>
+                <span className="text-slate-500 block">Report Verified Date:</span>
+                <span className="font-semibold text-slate-200">
+                  {viewPatientLabReport.completedAt ? new Date(viewPatientLabReport.completedAt).toLocaleString() : "N/A"}
+                </span>
+                <span className="text-emerald-400 block text-[11px]">Official Hospital Pathologist Verified</span>
+              </div>
+            </div>
+
+            {/* PARAMETERS TABLE */}
+            <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-900 text-slate-400 uppercase font-bold text-[10px] border-b border-slate-800">
+                  <tr>
+                    <th className="px-4 py-2.5">Investigation Parameter</th>
+                    <th className="px-4 py-2.5">Measured Value</th>
+                    <th className="px-4 py-2.5">Unit</th>
+                    <th className="px-4 py-2.5">Standard Reference Range</th>
+                    <th className="px-4 py-2.5">Result Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {(viewPatientLabReport.labResult?.parameterResults || []).map((p: any, idx: number) => (
+                    <tr key={idx}>
+                      <td className="px-4 py-2.5 font-medium text-slate-200">{p.parameter}</td>
+                      <td className="px-4 py-2.5 font-bold text-slate-100">{p.value}</td>
+                      <td className="px-4 py-2.5 text-slate-400">{p.unit}</td>
+                      <td className="px-4 py-2.5 text-slate-400">{p.referenceRange}</td>
+                      <td className="px-4 py-2.5">
+                        <span className={`px-2 py-0.5 text-[9px] font-bold rounded-md uppercase ${
+                          p.flag === "HIGH"
+                            ? "bg-rose-500/20 text-rose-400 border border-rose-500/30"
+                            : p.flag === "LOW"
+                            ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                            : p.flag === "ABNORMAL"
+                            ? "bg-purple-500/20 text-purple-400 border border-purple-500/30"
+                            : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                        }`}>
+                          {p.flag}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* CLINICAL SUMMARY */}
+            <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-850 space-y-1 text-xs">
+              <span className="font-bold text-cyan-400 block">Pathologist Clinical Interpretation:</span>
+              <p className="text-slate-200 leading-relaxed">{viewPatientLabReport.labResult?.summary}</p>
+              {viewPatientLabReport.labResult?.remarks && (
+                <p className="text-slate-400 text-[11px] pt-1 border-t border-slate-900">
+                  <strong className="text-slate-300">Notes: </strong>{viewPatientLabReport.labResult.remarks}
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs text-slate-400">
+              <span>Verified By: <strong className="text-emerald-400">{viewPatientLabReport.labResult?.approvedBy || "Pathologist On Duty"}</strong></span>
+              <button
+                onClick={() => setViewPatientLabReport(null)}
+                className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold"
+              >
+                Close Report
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PATIENT INVOICE & RECEIPT MODAL */}
+      {selectedPatientInvoice && (
+        <InvoiceModal
+          bill={selectedPatientInvoice}
+          onClose={() => setSelectedPatientInvoice(null)}
+          onPaymentSuccess={() => {
+            fetchData();
+            setSelectedPatientInvoice(null);
+          }}
+          allowPayment={true}
+        />
+      )}
+
     </div>
   );
 };
+

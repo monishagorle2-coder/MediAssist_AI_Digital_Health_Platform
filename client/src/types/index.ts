@@ -1,4 +1,4 @@
-export type Role = 'PATIENT' | 'DOCTOR' | 'RECEPTIONIST' | 'PHARMACIST' | 'ADMIN';
+export type Role = 'PATIENT' | 'DOCTOR' | 'RECEPTIONIST' | 'PHARMACIST' | 'LAB_TECHNICIAN' | 'ADMIN';
 
 export type AppointmentStatus = 'PENDING' | 'CONFIRMED' | 'CANCELLED';
 export type DiagnosisStatus = 'PENDING' | 'CONFIRMED';
@@ -160,21 +160,44 @@ export interface Medicine {
   daysUntilExpiry?: number;
 }
 
+export type PaymentMethod = 'CASH' | 'CARD' | 'UPI' | 'INSURANCE';
+export type PaymentStatus = 'PENDING' | 'PAID' | 'PARTIALLY_PAID' | 'CANCELLED' | 'REFUNDED';
+export type BillItemCategory = 'CONSULTATION' | 'PHARMACY' | 'LABORATORY' | 'PROCEDURE' | 'OTHER';
+
 export interface BillItem {
+  id?: string;
+  billId?: string;
   description: string;
-  cost: number;
+  category?: BillItemCategory | string;
+  quantity?: number;
+  unitPrice?: number;
+  amount?: number;
+  cost?: number;
 }
 
 export interface Bill {
   id: string;
+  invoiceNumber?: string;
   appointmentId?: string;
   patientId: string;
   amount: number;
-  status: BillStatus;
-  items: BillItem[];
+  subtotal?: number;
+  taxRate?: number;
+  taxAmount?: number;
+  discountAmount?: number;
+  totalAmount?: number;
+  status: BillStatus | string;
+  paymentStatus: PaymentStatus | string;
+  paymentMethod?: PaymentMethod | string;
   paidAt?: string;
+  transactionReference?: string;
+  notes?: string;
+  items: BillItem[] | any;
+  billItems?: BillItem[];
   createdAt: string;
+  updatedAt?: string;
   patient?: Patient;
+  appointment?: Appointment;
 }
 
 export interface AuditLog {
@@ -194,4 +217,68 @@ export interface NotificationItem {
   message: string;
   read: boolean;
   createdAt: string;
+}
+
+export type LabOrderStatus = 'ORDERED' | 'SAMPLE_COLLECTED' | 'PROCESSING' | 'COMPLETED' | 'CANCELLED';
+export type LabPriority = 'ROUTINE' | 'URGENT' | 'STAT';
+
+export interface LabTest {
+  id: string;
+  name: string;
+  code: string;
+  category: string;
+  description?: string;
+  sampleType: string;
+  price: number;
+  tatHours: number;
+  referenceRange?: string;
+  unit?: string;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ParameterResultItem {
+  parameter: string;
+  value: string;
+  unit: string;
+  referenceRange: string;
+  flag: 'NORMAL' | 'HIGH' | 'LOW' | 'ABNORMAL';
+}
+
+export interface LabResult {
+  id: string;
+  labOrderId: string;
+  parameterResults: ParameterResultItem[];
+  summary: string;
+  remarks?: string;
+  testedBy?: string;
+  approvedBy?: string;
+  resultDate: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface LabOrder {
+  id: string;
+  orderNumber: string;
+  patientId: string;
+  doctorId: string;
+  appointmentId?: string;
+  diagnosisRecordId?: string;
+  labTestId: string;
+  status: LabOrderStatus;
+  priority: LabPriority;
+  clinicalNotes?: string;
+  sampleCollectedAt?: string;
+  sampleCollectedBy?: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt?: string;
+  patient?: Patient;
+  doctor?: Doctor;
+  appointment?: Appointment;
+  diagnosisRecord?: DiagnosisRecord;
+  labTest?: LabTest;
+  labResult?: LabResult;
 }
