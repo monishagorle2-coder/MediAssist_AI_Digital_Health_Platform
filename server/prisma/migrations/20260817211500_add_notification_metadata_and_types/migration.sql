@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "Notification" ADD COLUMN "type" TEXT NOT NULL DEFAULT 'SYSTEM',
+ADD COLUMN "link" TEXT,
+ADD COLUMN "metadata" TEXT;

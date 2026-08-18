@@ -3,6 +3,7 @@ import { z } from "zod";
 import prisma from "../db";
 import { AuthenticatedRequest, authenticateToken, requireRoles } from "../middlewares/auth";
 import { generateInvoiceNumber } from "./billing";
+import { notificationService } from "../services/notificationService";
 
 const router = Router();
 
@@ -99,6 +100,8 @@ router.post("/prescriptions", authenticateToken as any, requireRoles(["DOCTOR"])
       return res.status(400).json({ error: "Doctor profile not found for this user" });
     }
 
+    const patient = await prisma.patient.findUnique({ where: { id: validated.patientId } });
+
     const prescription = await prisma.prescription.create({
       data: {
         appointmentId: validated.appointmentId || null,
@@ -113,6 +116,22 @@ router.post("/prescriptions", authenticateToken as any, requireRoles(["DOCTOR"])
         status: "PENDING",
       },
     });
+
+    // Notify Pharmacists
+    await notificationService.notifyRole("PHARMACIST", {
+      title: "New Prescription Order",
+      message: `Prescription issued for patient ${patient?.name || "Patient"}.`,
+      type: "PHARMACY",
+      link: "/prescriptions",
+      metadata: { prescriptionId: prescription.id, patientId: validated.patientId },
+    });
+
+    // Broadcast Real-time event
+    notificationService.broadcastHospitalEvent(
+      { roles: ["PHARMACIST", "ADMIN"] },
+      "PRESCRIPTION_CREATED",
+      { prescriptionId: prescription.id, patientId: validated.patientId }
+    );
 
     res.status(201).json(prescription);
   } catch (error: any) {
@@ -333,6 +352,45 @@ router.put("/prescriptions/:id/dispense", authenticateToken as any, requireRoles
 
       return { updated: updatedPrescription, stockAlerts, totalCost };
     });
+
+    // Notify Patient
+    if (prescription.patient?.userId) {
+      await notificationService.createAndSendNotification({
+        userId: prescription.patient.userId,
+        title: "Medications Dispensed",
+        message: "Your prescribed medications have been prepared and dispensed by the pharmacy counter.",
+        type: "PHARMACY",
+        link: "/prescriptions",
+        metadata: { prescriptionId: id },
+      });
+    }
+
+    // Broadcast Real-time event
+    notificationService.broadcastHospitalEvent(
+      {
+        roles: ["PHARMACIST", "ADMIN"],
+        userIds: [prescription.patient?.userId].filter(Boolean) as string[],
+      },
+      "PRESCRIPTION_DISPENSED",
+      { prescriptionId: id, patientId: prescription.patientId }
+    );
+
+    // If low stock alerts triggered, notify pharmacists
+    if (result.stockAlerts.length > 0) {
+      await notificationService.notifyRole("PHARMACIST", {
+        title: "Pharmacy Low Stock Alert",
+        message: `Inventory critical: Low stock detected for ${result.stockAlerts.join(", ")}. Please reorder.`,
+        type: "PHARMACY",
+        link: "/inventory",
+        metadata: { items: result.stockAlerts },
+      });
+
+      notificationService.broadcastHospitalEvent(
+        { roles: ["PHARMACIST", "ADMIN"] },
+        "LOW_STOCK_ALERT",
+        { items: result.stockAlerts }
+      );
+    }
 
     res.json({
       message: "Prescription dispensed and stock updated successfully",

@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from "react";
 import api from "../services/api";
 import type { Appointment, Medicine, Vitals, LabOrder, LabTest } from "../types";
-import { Stethoscope, Activity, Pill, CheckCircle2, Sparkles, ChevronRight, HeartPulse, X, AlertTriangle, FlaskConical, FileText, Plus } from "lucide-react";
+import { ClinicalDocumentModal } from "../components/ClinicalDocumentModal";
+import { MedicalTimelineView } from "../components/MedicalTimelineView";
+import { Stethoscope, Activity, Pill, CheckCircle2, Sparkles, ChevronRight, HeartPulse, X, AlertTriangle, FlaskConical, FileText, Plus, Printer, History } from "lucide-react";
 
 interface DoctorDashboardProps {
   activeTab: string;
@@ -57,6 +59,23 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
   ]);
   const [prescriptionNotes, setPrescriptionNotes] = useState("");
   const [prescLoading, setPrescLoading] = useState(false);
+
+  // Clinical Document Modal State
+  const [showDoctorDocModal, setShowDoctorDocModal] = useState(false);
+  const [doctorDocType, setDoctorDocType] = useState<"DIAGNOSIS" | "PRESCRIPTION" | "LAB_REPORT" | "TIMELINE">("DIAGNOSIS");
+  const [doctorDocData, setDoctorDocData] = useState<any>(null);
+  const [showPatientTimelineModal, setShowPatientTimelineModal] = useState(false);
+
+  const openDoctorLabReport = async (id: string) => {
+    try {
+      const res = await api.get(`/medical-records/lab/${id}/report`);
+      setDoctorDocType("LAB_REPORT");
+      setDoctorDocData(res.data);
+      setShowDoctorDocModal(true);
+    } catch (err: any) {
+      alert(err.response?.data?.error || "Failed to load lab report document");
+    }
+  };
 
   useEffect(() => {
     fetchAppointments();
@@ -580,6 +599,14 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
                   >
                     <FileText className="h-4 w-4" />
                     <span>Lab History</span>
+                  </button>
+
+                  <button
+                    onClick={() => setShowPatientTimelineModal(true)}
+                    className="px-3 py-2 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-semibold flex items-center space-x-1.5 transition-all"
+                  >
+                    <History className="h-4 w-4 text-cyan-400" />
+                    <span>EHR Timeline</span>
                   </button>
 
                   <button
@@ -1223,7 +1250,14 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
               <p className="text-slate-200">{viewDoctorReport.labResult?.summary}</p>
             </div>
 
-            <div className="flex justify-end pt-2 border-t border-slate-800">
+            <div className="flex justify-between items-center pt-2 border-t border-slate-800">
+              <button
+                onClick={() => openDoctorLabReport(viewDoctorReport.id)}
+                className="px-3.5 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs flex items-center space-x-1.5 transition-all shadow-md cursor-pointer"
+              >
+                <Printer className="h-3.5 w-3.5" />
+                <span>Print Official Report</span>
+              </button>
               <button
                 onClick={() => setViewDoctorReport(null)}
                 className="px-4 py-1.5 rounded-xl bg-slate-800 text-slate-300 font-semibold text-xs"
@@ -1285,6 +1319,33 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
           </div>
         </div>
       )}
+
+      {/* PATIENT EHR TIMELINE MODAL */}
+      {showPatientTimelineModal && selectedApp && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-4xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-100 flex items-center space-x-2">
+                <History className="h-5 w-5 text-cyan-400" />
+                <span>Longitudinal Medical Timeline — {selectedApp.patient?.name || "Patient Record"}</span>
+              </h3>
+              <button onClick={() => setShowPatientTimelineModal(false)} className="text-slate-400 hover:text-slate-200">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <MedicalTimelineView patientId={selectedApp.patientId} />
+          </div>
+        </div>
+      )}
+
+      {/* FORMAL CLINICAL DOCUMENT MODAL */}
+      <ClinicalDocumentModal
+        isOpen={showDoctorDocModal}
+        onClose={() => setShowDoctorDocModal(false)}
+        documentType={doctorDocType}
+        data={doctorDocData}
+      />
 
     </div>
   );

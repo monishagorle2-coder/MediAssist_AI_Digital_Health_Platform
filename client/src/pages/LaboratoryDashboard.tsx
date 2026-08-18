@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import api from "../services/api";
 import type { LabOrder, LabTest, ParameterResultItem } from "../types";
+import { ClinicalDocumentModal } from "../components/ClinicalDocumentModal";
 import { 
   FileSpreadsheet, 
   AlertTriangle, 
@@ -12,7 +13,8 @@ import {
   FileText, 
   UserCheck, 
   X,
-  Trash2
+  Trash2,
+  Printer
 } from "lucide-react";
 
 interface LaboratoryDashboardProps {
@@ -48,6 +50,18 @@ export const LaboratoryDashboard: React.FC<LaboratoryDashboardProps> = ({ active
 
   // View Report Modal State
   const [viewReportOrder, setViewReportOrder] = useState<LabOrder | null>(null);
+  const [showPrintDocModal, setShowPrintDocModal] = useState(false);
+  const [printDocData, setPrintDocData] = useState<any>(null);
+
+  const openPrintableLabReport = async (orderId: string) => {
+    try {
+      const res = await api.get(`/medical-records/lab/${orderId}/report`);
+      setPrintDocData(res.data);
+      setShowPrintDocModal(true);
+    } catch (err: any) {
+      alert(err.response?.data?.error || "Failed to load printable lab report");
+    }
+  };
 
   // Add Catalog Modal State
   const [showAddTestModal, setShowAddTestModal] = useState(false);
@@ -732,12 +746,22 @@ export const LaboratoryDashboard: React.FC<LaboratoryDashboardProps> = ({ active
                   </p>
                 </div>
               </div>
-              <button
-                onClick={() => setViewReportOrder(null)}
-                className="text-slate-400 hover:text-slate-200"
-              >
-                <X className="h-5 w-5" />
-              </button>
+
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => openPrintableLabReport(viewReportOrder.id)}
+                  className="px-3.5 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs flex items-center space-x-1.5 transition-all shadow-md cursor-pointer"
+                >
+                  <Printer className="h-3.5 w-3.5" />
+                  <span>Print Formal Report</span>
+                </button>
+                <button
+                  onClick={() => setViewReportOrder(null)}
+                  className="text-slate-400 hover:text-slate-200 p-1"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
             </div>
 
             {/* PATIENT & DOCTOR INFO BANNER */}
@@ -964,6 +988,14 @@ export const LaboratoryDashboard: React.FC<LaboratoryDashboardProps> = ({ active
           </div>
         </div>
       )}
+
+      {/* FORMAL CLINICAL DOCUMENT MODAL */}
+      <ClinicalDocumentModal
+        isOpen={showPrintDocModal}
+        onClose={() => setShowPrintDocModal(false)}
+        documentType="LAB_REPORT"
+        data={printDocData}
+      />
 
     </div>
   );

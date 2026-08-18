@@ -210,11 +210,16 @@ export interface AuditLog {
   createdAt: string;
 }
 
+export type NotificationType = 'APPOINTMENT' | 'QUEUE' | 'CONSULTATION' | 'DIAGNOSIS' | 'PHARMACY' | 'LABORATORY' | 'BILLING' | 'SYSTEM';
+
 export interface NotificationItem {
   id: string;
   userId: string;
   title: string;
   message: string;
+  type?: NotificationType | string;
+  link?: string;
+  metadata?: any;
   read: boolean;
   createdAt: string;
 }

@@ -2,6 +2,7 @@ import { Router, Response } from "express";
 import { z } from "zod";
 import prisma from "../db";
 import { AuthenticatedRequest, authenticateToken } from "../middlewares/auth";
+import { notificationService } from "../services/notificationService";
 
 const router = Router();
 
@@ -96,17 +97,30 @@ router.put("/:id/confirm", authenticateToken as any, async (req: AuthenticatedRe
         },
       });
 
-      // Send patient a notification
-      await tx.notification.create({
-        data: {
-          userId: record.patient.userId,
-          title: "New Diagnosis Report Available",
-          message: `Your medical report for diagnosis '${finalDiagnosis}' has been confirmed by your doctor.`,
-        },
-      });
-
       return updated;
     });
+
+    // Send patient a real-time notification
+    if (record.patient.userId) {
+      await notificationService.createAndSendNotification({
+        userId: record.patient.userId,
+        title: "New Diagnosis Report Available",
+        message: `Your medical report for diagnosis '${finalDiagnosis}' has been confirmed by your doctor.`,
+        type: "DIAGNOSIS",
+        link: "/reports",
+        metadata: { diagnosisId: id, patientId: record.patientId },
+      });
+    }
+
+    // Broadcast hospital event
+    notificationService.broadcastHospitalEvent(
+      {
+        roles: ["ADMIN"],
+        userIds: [record.patient.userId].filter(Boolean),
+      },
+      "DIAGNOSIS_CONFIRMED",
+      { diagnosisId: id, patientId: record.patientId, finalDiagnosis }
+    );
 
     res.json(updatedRecord);
   } catch (error: any) {
@@ -237,6 +251,88 @@ router.get("/", authenticateToken as any, async (req: AuthenticatedRequest, res:
     res.json(formattedRecords);
   } catch (error: any) {
     res.status(500).json({ error: "Failed to fetch diagnosis records", details: error.message });
+  }
+});
+
+// GET /api/diagnosis/:id/report (Formal printable diagnosis document)
+router.get("/:id/report", authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const userRole = req.user?.role;
+    const patientId = req.user?.patientId;
+
+    const record: any = await prisma.diagnosisRecord.findUnique({
+      where: { id },
+      include: {
+        patient: true,
+        doctor: { include: { department: true } },
+        appointment: {
+          include: {
+            vitals: { orderBy: { createdAt: "desc" }, take: 1 },
+          },
+        },
+      },
+    });
+
+    if (!record) {
+      return res.status(404).json({ error: "Diagnosis record not found" });
+    }
+
+    if (userRole === "PATIENT") {
+      if (record.patientId !== patientId) {
+        return res.status(403).json({ error: "Forbidden: You are not authorized to view this diagnosis report" });
+      }
+      if (record.status !== "CONFIRMED") {
+        return res.status(403).json({ error: "Access Denied: This diagnosis record is pending clinician confirmation." });
+      }
+    }
+
+    const latestVitals = record.appointment?.vitals?.[0] || null;
+
+    res.json({
+      hospital: {
+        name: "MediAssist Multi-Specialty Hospital & Research Center",
+        address: "100 Medical Center Boulevard, Healthcare District, Metro City, 560001",
+        phone: "+1 (800) 555-MEDI",
+        accreditation: "NABH / JCI Accredited",
+      },
+      documentType: "CLINICAL_DIAGNOSIS_REPORT",
+      reportNumber: `DIAG-${record.id.slice(-8).toUpperCase()}`,
+      patient: {
+        id: record.patient.id,
+        name: record.patient.name,
+        phone: record.patient.phone,
+        dob: record.patient.dob,
+        gender: record.patient.gender,
+        bloodGroup: record.patient.bloodGroup,
+        allergies: record.patient.allergies || "None reported",
+      },
+      doctor: {
+        name: `Dr. ${record.doctor.name}`,
+        specialization: record.doctor.specialization,
+        department: record.doctor.department?.name || "General Medicine",
+        email: record.doctor.email,
+      },
+      appointment: record.appointment
+        ? {
+            id: record.appointment.id,
+            visitDate: record.appointment.slotDateTime,
+            tokenNumber: record.appointment.tokenNumber,
+            reason: record.appointment.reason,
+          }
+        : null,
+      clinicalFindings: {
+        chiefComplaints: record.symptoms,
+        finalDiagnosis: record.finalDiagnosis || "Clinical Assessment In Progress",
+        status: record.status,
+        confirmedAt: record.confirmedAt || record.createdAt,
+        confirmedBy: record.confirmedBy || `Dr. ${record.doctor.name}`,
+      },
+      vitals: latestVitals,
+      disclaimer: "This document is a certified medical assessment record produced and verified by the attending clinician.",
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch diagnosis report", details: error.message });
   }
 });
 

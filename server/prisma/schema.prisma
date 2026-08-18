@@ -207,6 +207,9 @@ model Notification {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   title     String
   message   String
+  type      String   @default("SYSTEM") // APPOINTMENT | QUEUE | CONSULTATION | DIAGNOSIS | PHARMACY | LABORATORY | BILLING | SYSTEM
+  link      String?
+  metadata  String?  // JSON string for entity IDs
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
 }

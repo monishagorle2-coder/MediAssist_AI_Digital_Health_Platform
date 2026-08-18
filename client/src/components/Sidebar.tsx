@@ -44,6 +44,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
               <span>Appointments</span>
             </button>
             <button
+              onClick={() => setActiveTab("timeline")}
+              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                activeTab === "timeline"
+                  ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/30"
+                  : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+              }`}
+            >
+              <FileSpreadsheet className="h-4 w-4 text-cyan-400" />
+              <span>EHR Medical Timeline</span>
+            </button>
+            <button
               onClick={() => setActiveTab("reports")}
               className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
                 activeTab === "reports"

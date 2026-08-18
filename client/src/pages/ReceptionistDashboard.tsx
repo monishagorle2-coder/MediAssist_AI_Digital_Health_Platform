@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import api from "../services/api";
 import type { Appointment, Patient, Doctor, Bill } from "../types";
 import { InvoiceModal } from "../components/InvoiceModal";
+import { useRealtimeNotifications } from "../hooks/useRealtimeNotifications";
 import { 
   Calendar, 
   UserPlus, 
@@ -71,11 +72,7 @@ export const ReceptionistDashboard: React.FC<ReceptionistDashboardProps> = ({ ac
   const [queueFilter, setQueueFilter] = useState<string>("ALL");
   const [checkingInId, setCheckingInId] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchData();
-  }, [activeTab]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       if (activeTab === "schedule") {
         const appRes = await api.get("/appointments");
@@ -102,7 +99,16 @@ export const ReceptionistDashboard: React.FC<ReceptionistDashboardProps> = ({ ac
     } catch (err) {
       console.error("Failed to load receptionist data", err);
     }
-  };
+  }, [activeTab]);
+
+  // Real-time Event Subscription for live queue and billing updates
+  useRealtimeNotifications(useCallback(() => {
+    fetchData();
+  }, [fetchData]));
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const handleCreateInvoice = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -3,6 +3,7 @@ import { z } from "zod";
 import prisma from "../db";
 import { AuthenticatedRequest, authenticateToken, requireRoles } from "../middlewares/auth";
 import { generateInvoiceNumber } from "./billing";
+import { notificationService } from "../services/notificationService";
 
 const router = Router();
 
@@ -357,6 +358,28 @@ router.post("/orders", authenticateToken as any, requireRoles(["DOCTOR", "ADMIN"
       return createdOrder;
     });
 
+    // Notify Patient
+    if (patient.userId) {
+      await notificationService.createAndSendNotification({
+        userId: patient.userId,
+        title: "Diagnostic Test Ordered",
+        message: `Dr. has ordered a ${labTest.name} (${order.orderNumber}) for your clinical evaluation.`,
+        type: "LABORATORY",
+        link: "/lab-reports",
+        metadata: { orderId: order.id, testCode: labTest.code },
+      });
+    }
+
+    // Broadcast Real-time event
+    notificationService.broadcastHospitalEvent(
+      {
+        roles: ["LAB_TECHNICIAN", "ADMIN"],
+        userIds: [patient.userId, order.doctor?.userId].filter(Boolean) as string[],
+      },
+      "LAB_ORDER_CREATED",
+      { orderId: order.id, orderNumber: order.orderNumber, patientId: patient.id, testName: labTest.name }
+    );
+
     res.status(201).json(order);
   } catch (error: any) {
     if (error instanceof z.ZodError) return res.status(400).json({ error: "Validation failed", details: error.errors });
@@ -499,7 +522,7 @@ router.put("/orders/:id/sample", authenticateToken as any, requireRoles(["LAB_TE
 
     const order = await prisma.labOrder.findUnique({
       where: { id },
-      include: { labTest: true, patient: true },
+      include: { labTest: true, patient: true, doctor: true },
     });
 
     if (!order) return res.status(404).json({ error: "Lab order not found" });
@@ -537,6 +560,28 @@ router.put("/orders/:id/sample", authenticateToken as any, requireRoles(["LAB_TE
 
       return resOrder;
     });
+
+    // Notify Patient
+    if (order.patient?.userId) {
+      await notificationService.createAndSendNotification({
+        userId: order.patient.userId,
+        title: "Specimen Sample Collected",
+        message: `Your ${order.labTest.sampleType} specimen for ${order.labTest.name} has been received by the diagnostic laboratory.`,
+        type: "LABORATORY",
+        link: "/lab-reports",
+        metadata: { orderId: id },
+      });
+    }
+
+    // Broadcast Real-time event
+    notificationService.broadcastHospitalEvent(
+      {
+        roles: ["LAB_TECHNICIAN", "ADMIN"],
+        userIds: [order.patient?.userId, order.doctor?.userId].filter(Boolean) as string[],
+      },
+      "LAB_SAMPLE_COLLECTED",
+      { orderId: id, status: "SAMPLE_COLLECTED" }
+    );
 
     res.json({ message: "Specimen sample collected and logged", order: updated });
   } catch (error: any) {
@@ -609,28 +654,7 @@ router.post("/orders/:id/results", authenticateToken as any, requireRoles(["LAB_
         include: { patient: true, doctor: true, labTest: true },
       });
 
-      // 3. Notifications
-      if (order.doctor?.userId) {
-        await tx.notification.create({
-          data: {
-            userId: order.doctor.userId,
-            title: "Lab Results Ready",
-            message: `Lab results for ${order.labTest.name} (${order.orderNumber}) for patient ${order.patient.name} are now finalized.`,
-          },
-        });
-      }
-
-      if (order.patient?.userId) {
-        await tx.notification.create({
-          data: {
-            userId: order.patient.userId,
-            title: "Diagnostic Report Published",
-            message: `Your diagnostic report for ${order.labTest.name} is available in your medical records.`,
-          },
-        });
-      }
-
-      // 4. Audit Log
+      // 3. Audit Log
       await tx.auditLog.create({
         data: {
           userId: req.user?.id,
@@ -641,6 +665,38 @@ router.post("/orders/:id/results", authenticateToken as any, requireRoles(["LAB_
 
       return { order: updatedOrder, labResult };
     });
+
+    // 4. Notifications & Real-Time Broadcast
+    if (order.doctor?.userId) {
+      await notificationService.createAndSendNotification({
+        userId: order.doctor.userId,
+        title: "Lab Results Ready",
+        message: `Lab results for ${order.labTest.name} (${order.orderNumber}) for patient ${order.patient.name} are now finalized.`,
+        type: "LABORATORY",
+        link: "/laboratory",
+        metadata: { orderId: id },
+      });
+    }
+
+    if (order.patient?.userId) {
+      await notificationService.createAndSendNotification({
+        userId: order.patient.userId,
+        title: "Diagnostic Report Published",
+        message: `Your diagnostic report for ${order.labTest.name} is available in your medical records.`,
+        type: "LABORATORY",
+        link: "/lab-reports",
+        metadata: { orderId: id },
+      });
+    }
+
+    notificationService.broadcastHospitalEvent(
+      {
+        roles: ["LAB_TECHNICIAN", "ADMIN"],
+        userIds: [order.doctor?.userId, order.patient?.userId].filter(Boolean) as string[],
+      },
+      "LAB_REPORT_COMPLETED",
+      { orderId: id, orderNumber: order.orderNumber, status: "COMPLETED" }
+    );
 
     res.status(201).json({
       message: "Lab report results entered and published successfully",
@@ -727,6 +783,110 @@ router.get("/summary", authenticateToken as any, requireRoles(["LAB_TECHNICIAN",
     });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to fetch lab summary", details: error.message });
+  }
+});
+
+// GET /api/lab/orders/:id/report (Formal printable lab report document)
+router.get("/orders/:id/report", authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const userRole = req.user?.role;
+    const patientId = req.user?.patientId;
+
+    const order = await prisma.labOrder.findFirst({
+      where: {
+        OR: [{ id }, { orderNumber: id }],
+      },
+      include: {
+        patient: true,
+        doctor: { include: { department: true } },
+        labTest: true,
+        labResult: true,
+        appointment: true,
+      },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: "Laboratory order not found" });
+    }
+
+    if (userRole === "PATIENT" && order.patientId !== patientId) {
+      return res.status(403).json({ error: "Forbidden: You are not authorized to view this diagnostic report" });
+    }
+
+    let parsedParameters: any[] = [];
+    if (order.labResult) {
+      try {
+        parsedParameters =
+          typeof order.labResult.parameterResults === "string"
+            ? JSON.parse(order.labResult.parameterResults)
+            : order.labResult.parameterResults;
+      } catch (e) {
+        parsedParameters = [];
+      }
+    }
+
+    res.json({
+      hospital: {
+        name: "MediAssist Multi-Specialty Hospital & Research Center",
+        address: "100 Medical Center Boulevard, Healthcare District, Metro City, 560001",
+        phone: "+1 (800) 555-MEDI",
+        accreditation: "NABH / JCI Accredited",
+      },
+      documentType: "LABORATORY_DIAGNOSTIC_REPORT",
+      orderNumber: order.orderNumber,
+      accessionId: `ACC-${order.id.slice(-6).toUpperCase()}`,
+      status: order.status,
+      priority: order.priority,
+      createdAt: order.createdAt,
+      sampleCollectedAt: order.sampleCollectedAt,
+      sampleCollectedBy: order.sampleCollectedBy,
+      completedAt: order.completedAt,
+      patient: {
+        id: order.patient.id,
+        name: order.patient.name,
+        phone: order.patient.phone,
+        dob: order.patient.dob,
+        gender: order.patient.gender,
+        bloodGroup: order.patient.bloodGroup,
+      },
+      doctor: order.doctor
+        ? {
+            name: `Dr. ${order.doctor.name}`,
+            specialization: order.doctor.specialization,
+            department: order.doctor.department?.name || "Clinical Pathology",
+          }
+        : null,
+      test: {
+        id: order.labTest.id,
+        name: order.labTest.name,
+        code: order.labTest.code,
+        category: order.labTest.category,
+        sampleType: order.labTest.sampleType,
+        tatHours: order.labTest.tatHours,
+        referenceRange: order.labTest.referenceRange,
+        unit: order.labTest.unit,
+      },
+      result: order.labResult
+        ? {
+            parameters: parsedParameters.map((p: any) => ({
+              parameter: p.parameter || order.labTest.name,
+              value: p.value || "N/A",
+              unit: p.unit || order.labTest.unit || "",
+              referenceRange: p.referenceRange || order.labTest.referenceRange || "",
+              flag: p.flag || "NORMAL",
+            })),
+            summary: order.labResult.summary,
+            remarks: order.labResult.remarks || "No supplementary clinical pathology remarks.",
+            testedBy: order.labResult.testedBy || order.sampleCollectedBy || "Laboratory Analyst",
+            approvedBy: order.labResult.approvedBy || "Consultant Pathologist, MD",
+            resultDate: order.labResult.resultDate,
+          }
+        : null,
+      disclaimer: "These laboratory results relate specifically to the specimen submitted. Diagnostic interpretations should be correlated clinically with patient history.",
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to generate laboratory report document", details: error.message });
   }
 });
 

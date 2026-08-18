@@ -2,6 +2,8 @@ import React, { useState, useEffect } from "react";
 import api from "../services/api";
 import type { Appointment, DiagnosisRecord, Prescription, Doctor, Patient, Vitals, LabOrder, Bill } from "../types";
 import { InvoiceModal } from "../components/InvoiceModal";
+import { ClinicalDocumentModal } from "../components/ClinicalDocumentModal";
+import { MedicalTimelineView } from "../components/MedicalTimelineView";
 import { 
   Calendar, 
   FileText, 
@@ -87,6 +89,44 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
     },
   ]);
   const [aiLoading, setAiLoading] = useState(false);
+
+  // Clinical Document Modal State
+  const [showClinicalDocModal, setShowClinicalDocModal] = useState(false);
+  const [clinicalDocType, setClinicalDocType] = useState<"DIAGNOSIS" | "PRESCRIPTION" | "LAB_REPORT" | "TIMELINE">("DIAGNOSIS");
+  const [clinicalDocData, setClinicalDocData] = useState<any>(null);
+
+  const openDiagnosisDocument = async (id: string) => {
+    try {
+      const res = await api.get(`/medical-records/diagnosis/${id}/report`);
+      setClinicalDocType("DIAGNOSIS");
+      setClinicalDocData(res.data);
+      setShowClinicalDocModal(true);
+    } catch (err: any) {
+      alert(err.response?.data?.error || "Failed to load diagnosis document");
+    }
+  };
+
+  const openPrescriptionDocument = async (id: string) => {
+    try {
+      const res = await api.get(`/medical-records/prescription/${id}/report`);
+      setClinicalDocType("PRESCRIPTION");
+      setClinicalDocData(res.data);
+      setShowClinicalDocModal(true);
+    } catch (err: any) {
+      alert(err.response?.data?.error || "Failed to load prescription document");
+    }
+  };
+
+  const openLabReportDocument = async (id: string) => {
+    try {
+      const res = await api.get(`/medical-records/lab/${id}/report`);
+      setClinicalDocType("LAB_REPORT");
+      setClinicalDocData(res.data);
+      setShowClinicalDocModal(true);
+    } catch (err: any) {
+      alert(err.response?.data?.error || "Failed to load lab report document");
+    }
+  };
 
   useEffect(() => {
     fetchData();
@@ -379,6 +419,11 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
         </div>
       )}
 
+      {/* LONGITUDINAL EHR TIMELINE TAB */}
+      {activeTab === "timeline" && (
+        <MedicalTimelineView patientId={profile?.id || ""} />
+      )}
+
       {/* CONFIRMED REPORTS TAB (STRICT SECURITY RULE: Patients only see official confirmed reports) */}
       {activeTab === "reports" && (
         <div className="space-y-6">
@@ -405,9 +450,18 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
                       <CheckCircle2 className="h-5 w-5 text-emerald-400" />
                       <span className="text-sm font-bold text-slate-100">Official Diagnosis Report</span>
                     </div>
-                    <span className="text-xs text-slate-400 font-medium">
-                      Confirmed on: {rep.confirmedAt ? new Date(rep.confirmedAt).toLocaleDateString() : "N/A"}
-                    </span>
+                    <div className="flex items-center space-x-3">
+                      <span className="text-xs text-slate-400 font-medium">
+                        Confirmed on: {rep.confirmedAt ? new Date(rep.confirmedAt).toLocaleDateString() : "N/A"}
+                      </span>
+                      <button
+                        onClick={() => openDiagnosisDocument(rep.id)}
+                        className="px-3 py-1 rounded-xl bg-slate-800 hover:bg-cyan-500/20 text-slate-300 hover:text-cyan-300 text-xs font-bold border border-slate-700 flex items-center space-x-1.5 transition-all cursor-pointer"
+                      >
+                        <Printer className="h-3.5 w-3.5" />
+                        <span>Print Report</span>
+                      </button>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
@@ -493,13 +547,22 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
                       </span>
 
                       {order.status === "COMPLETED" && (
-                        <button
-                          onClick={() => setViewPatientLabReport(order)}
-                          className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs shadow-lg transition-all flex items-center space-x-1.5"
-                        >
-                          <FileText className="h-4 w-4" />
-                          <span>View Official Report</span>
-                        </button>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => setViewPatientLabReport(order)}
+                            className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs shadow-lg transition-all flex items-center space-x-1.5 cursor-pointer"
+                          >
+                            <FileText className="h-4 w-4" />
+                            <span>View Report</span>
+                          </button>
+                          <button
+                            onClick={() => openLabReportDocument(order.id)}
+                            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-cyan-500/20 text-slate-300 hover:text-cyan-300 text-xs font-bold border border-slate-700 flex items-center space-x-1.5 transition-all cursor-pointer"
+                          >
+                            <Printer className="h-3.5 w-3.5" />
+                            <span>Print PDF</span>
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -559,11 +622,20 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
                       <Pill className="h-4 w-4 text-cyan-400" />
                       <span className="text-xs font-bold text-slate-200">Prescription #{pres.id.slice(0, 8)}</span>
                     </div>
-                    <span className={`px-2.5 py-0.5 text-[10px] font-bold rounded-full border ${
-                      pres.status === "DISPENSED" ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-amber-500/20 text-amber-400 border-amber-500/30"
-                    }`}>
-                      {pres.status}
-                    </span>
+                    <div className="flex items-center space-x-3">
+                      <span className={`px-2.5 py-0.5 text-[10px] font-bold rounded-full border ${
+                        pres.status === "DISPENSED" ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-amber-500/20 text-amber-400 border-amber-500/30"
+                      }`}>
+                        {pres.status}
+                      </span>
+                      <button
+                        onClick={() => openPrescriptionDocument(pres.id)}
+                        className="px-3 py-1 rounded-xl bg-slate-800 hover:bg-cyan-500/20 text-slate-300 hover:text-cyan-300 text-xs font-bold border border-slate-700 flex items-center space-x-1.5 transition-all cursor-pointer"
+                      >
+                        <Printer className="h-3.5 w-3.5" />
+                        <span>Print Rx</span>
+                      </button>
+                    </div>
                   </div>
 
                   {/* Medicines List */}
@@ -1513,6 +1585,14 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ activeTab })
           allowPayment={true}
         />
       )}
+
+      {/* FORMAL CLINICAL DOCUMENT MODAL */}
+      <ClinicalDocumentModal
+        isOpen={showClinicalDocModal}
+        onClose={() => setShowClinicalDocModal(false)}
+        documentType={clinicalDocType}
+        data={clinicalDocData}
+      />
 
     </div>
   );

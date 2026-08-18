@@ -3,6 +3,7 @@ import { z } from "zod";
 import prisma from "../db";
 import { AuthenticatedRequest, authenticateToken, requireRoles } from "../middlewares/auth";
 import { generateInvoiceNumber } from "./billing";
+import { notificationService } from "../services/notificationService";
 
 const router = Router();
 
@@ -449,14 +450,37 @@ router.post("/:id/check-in", authenticateToken as any, requireRoles(["RECEPTIONI
 
       // Notification for Doctor
       if (appointment.doctor?.userId) {
-        await tx.notification.create({
-          data: {
-            userId: appointment.doctor.userId,
-            title: "Patient Checked In",
-            message: `${appointment.patient.name} has checked in with Token #${nextToken}.`,
-          },
+        await notificationService.createAndSendNotification({
+          userId: appointment.doctor.userId,
+          title: "Patient Checked In",
+          message: `${appointment.patient.name} has checked in with Token #${nextToken}.`,
+          type: "QUEUE",
+          link: "/queue",
+          metadata: { appointmentId: id, tokenNumber: nextToken },
         });
       }
+
+      // Notification for Patient
+      if (appointment.patient?.userId) {
+        await notificationService.createAndSendNotification({
+          userId: appointment.patient.userId,
+          title: "Consultation Token Issued",
+          message: `You are checked in! Your consultation token is #${nextToken}. Please wait in the OPD lounge.`,
+          type: "QUEUE",
+          link: "/appointments",
+          metadata: { appointmentId: id, tokenNumber: nextToken },
+        });
+      }
+
+      // Broadcast Real-time event to Receptionist, Doctor, and Patient
+      notificationService.broadcastHospitalEvent(
+        {
+          roles: ["RECEPTIONIST", "ADMIN"],
+          userIds: [appointment.doctor?.userId, appointment.patient?.userId].filter(Boolean) as string[],
+        },
+        "QUEUE_UPDATE",
+        { appointmentId: id, tokenNumber: nextToken, queueStatus: "CHECKED_IN", patientName: appointment.patient.name }
+      );
 
       return appUpdated;
     });
@@ -514,14 +538,25 @@ router.put("/:id/start-consultation", authenticateToken as any, requireRoles(["D
 
     // Notify Patient
     if (appointment.patient?.userId) {
-      await prisma.notification.create({
-        data: {
-          userId: appointment.patient.userId,
-          title: "Consultation Started",
-          message: `Your consultation with ${appointment.doctor.name} has started.`,
-        },
+      await notificationService.createAndSendNotification({
+        userId: appointment.patient.userId,
+        title: "Consultation Started",
+        message: `Your consultation with Dr. ${appointment.doctor.name} has started.`,
+        type: "CONSULTATION",
+        link: "/appointments",
+        metadata: { appointmentId: id },
       });
     }
+
+    // Broadcast Real-time event
+    notificationService.broadcastHospitalEvent(
+      {
+        roles: ["RECEPTIONIST", "ADMIN"],
+        userIds: [appointment.doctor.userId, appointment.patient.userId].filter(Boolean) as string[],
+      },
+      "CONSULTATION_STARTED",
+      { appointmentId: id, queueStatus: "IN_CONSULTATION" }
+    );
 
     res.json({
       message: "Consultation started successfully",
@@ -574,14 +609,25 @@ router.put("/:id/complete-consultation", authenticateToken as any, requireRoles(
 
     // Notify Patient
     if (appointment.patient?.userId) {
-      await prisma.notification.create({
-        data: {
-          userId: appointment.patient.userId,
-          title: "Consultation Completed",
-          message: `Your consultation with ${appointment.doctor.name} is complete. You can access your diagnosis report and prescriptions online.`,
-        },
+      await notificationService.createAndSendNotification({
+        userId: appointment.patient.userId,
+        title: "Consultation Completed",
+        message: `Your consultation with Dr. ${appointment.doctor.name} is complete. You can access your diagnosis report and prescriptions online.`,
+        type: "CONSULTATION",
+        link: "/prescriptions",
+        metadata: { appointmentId: id },
       });
     }
+
+    // Broadcast Real-time event
+    notificationService.broadcastHospitalEvent(
+      {
+        roles: ["RECEPTIONIST", "ADMIN"],
+        userIds: [appointment.doctor.userId, appointment.patient.userId].filter(Boolean) as string[],
+      },
+      "CONSULTATION_COMPLETED",
+      { appointmentId: id, queueStatus: "COMPLETED" }
+    );
 
     res.json({
       message: "Consultation completed successfully",
@@ -723,6 +769,38 @@ router.post("/", authenticateToken as any, async (req: AuthenticatedRequest, res
        },
      });
 
+    // 4. Notifications & SSE Broadcast
+    if (patient.userId) {
+      await notificationService.createAndSendNotification({
+        userId: patient.userId,
+        title: "Appointment Confirmed",
+        message: `Your consultation with Dr. ${doctor.name} has been booked for ${slotDateTime.toLocaleDateString()}.`,
+        type: "APPOINTMENT",
+        link: "/appointments",
+        metadata: { appointmentId: appointment.id },
+      });
+    }
+
+    if (doctor.userId) {
+      await notificationService.createAndSendNotification({
+        userId: doctor.userId,
+        title: "New Appointment Booked",
+        message: `Patient ${patient.name} booked a consultation for ${slotDateTime.toLocaleDateString()}.`,
+        type: "APPOINTMENT",
+        link: "/appointments",
+        metadata: { appointmentId: appointment.id },
+      });
+    }
+
+    notificationService.broadcastHospitalEvent(
+      {
+        roles: ["RECEPTIONIST", "ADMIN"],
+        userIds: [doctor.userId, patient.userId].filter(Boolean) as string[],
+      },
+      "APPOINTMENT_BOOKED",
+      { appointmentId: appointment.id, doctorId: doctor.id, patientId: patient.id }
+    );
+
     res.status(201).json(appointment);
   } catch (error: any) {
     if (error instanceof z.ZodError) {
@@ -794,6 +872,7 @@ router.put("/:id", authenticateToken as any, async (req: AuthenticatedRequest, r
 
     const appointment = await prisma.appointment.findUnique({
       where: { id },
+      include: { patient: true, doctor: true },
     });
 
     if (!appointment) {
@@ -812,6 +891,40 @@ router.put("/:id", authenticateToken as any, async (req: AuthenticatedRequest, r
         ...(status === "CANCELLED" ? { queueStatus: "CANCELLED" } : {}),
       },
     });
+
+    // Notify upon cancellation
+    if (status === "CANCELLED") {
+      if (appointment.patient?.userId) {
+        await notificationService.createAndSendNotification({
+          userId: appointment.patient.userId,
+          title: "Appointment Cancelled",
+          message: `Your appointment with Dr. ${appointment.doctor.name} has been cancelled.`,
+          type: "APPOINTMENT",
+          link: "/appointments",
+          metadata: { appointmentId: id },
+        });
+      }
+
+      if (appointment.doctor?.userId) {
+        await notificationService.createAndSendNotification({
+          userId: appointment.doctor.userId,
+          title: "Appointment Cancelled",
+          message: `Appointment with patient ${appointment.patient.name} has been cancelled.`,
+          type: "APPOINTMENT",
+          link: "/appointments",
+          metadata: { appointmentId: id },
+        });
+      }
+
+      notificationService.broadcastHospitalEvent(
+        {
+          roles: ["RECEPTIONIST", "ADMIN"],
+          userIds: [appointment.doctor?.userId, appointment.patient?.userId].filter(Boolean) as string[],
+        },
+        "APPOINTMENT_CANCELLED",
+        { appointmentId: id }
+      );
+    }
 
     res.json(updated);
   } catch (error: any) {

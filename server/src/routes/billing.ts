@@ -2,6 +2,7 @@ import { Router, Response } from "express";
 import { z } from "zod";
 import prisma from "../db";
 import { AuthenticatedRequest, authenticateToken, requireRoles } from "../middlewares/auth";
+import { notificationService } from "../services/notificationService";
 
 const router = Router();
 
@@ -343,6 +344,78 @@ router.get("/:id", authenticateToken as any, async (req: AuthenticatedRequest, r
   }
 });
 
+// GET /api/bills/:id/invoice (Formal invoice document)
+router.get("/:id/invoice", authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const bill = await prisma.bill.findFirst({
+      where: {
+        OR: [{ id }, { invoiceNumber: id }],
+      },
+      include: {
+        patient: {
+          include: { user: { select: { email: true } } },
+        },
+        appointment: {
+          include: {
+            doctor: {
+              include: { department: true },
+            },
+          },
+        },
+        billItems: {
+          orderBy: { createdAt: "asc" },
+        },
+      },
+    });
+
+    if (!bill) {
+      return res.status(404).json({ error: "Invoice not found" });
+    }
+
+    if (req.user?.role === "PATIENT" && bill.patientId !== req.user.patientId) {
+      return res.status(403).json({ error: "Forbidden: Cannot access another patient's invoice" });
+    }
+
+    let legacyItems = [];
+    try {
+      legacyItems = typeof bill.items === "string" ? JSON.parse(bill.items) : bill.items || [];
+    } catch (e) {
+      legacyItems = [];
+    }
+
+    const activeItems = bill.billItems && bill.billItems.length > 0
+      ? bill.billItems
+      : legacyItems.map((it: any) => ({
+          id: bill.id,
+          description: it.description || "Hospital Service",
+          category: "OTHER",
+          quantity: 1,
+          unitPrice: it.cost || bill.amount,
+          amount: it.cost || bill.amount,
+        }));
+
+    res.json({
+      hospital: {
+        name: "MediAssist Multi-Specialty Hospital & Research Center",
+        address: "100 Medical Center Boulevard, Healthcare District, Metro City, 560001",
+        phone: "+1 (800) 555-MEDI",
+        taxId: "GSTIN-29AAAAA0000A1Z5",
+      },
+      documentType: "HOSPITAL_INVOICE_RECEIPT",
+      ...bill,
+      subtotal: bill.subtotal ?? bill.amount,
+      totalAmount: bill.totalAmount ?? bill.amount,
+      paymentStatus: bill.paymentStatus || bill.status,
+      items: activeItems,
+      billItems: activeItems,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch invoice document", details: error.message });
+  }
+});
+
 // ----------------------------------------------------
 // 5. POST CREATE INVOICE (Receptionist, Admin)
 // ----------------------------------------------------
@@ -424,6 +497,28 @@ router.post("/", authenticateToken as any, requireRoles(["RECEPTIONIST", "ADMIN"
       });
     });
 
+    // Notify Patient
+    if (patient.userId) {
+      await notificationService.createAndSendNotification({
+        userId: patient.userId,
+        title: "Hospital Invoice Issued",
+        message: `New hospital invoice #${invoiceNumber} for $${financials.totalAmount.toFixed(2)} has been generated.`,
+        type: "BILLING",
+        link: "/billing",
+        metadata: { billId: createdBill?.id, invoiceNumber },
+      });
+    }
+
+    // Broadcast Real-time event
+    notificationService.broadcastHospitalEvent(
+      {
+        roles: ["RECEPTIONIST", "ADMIN"],
+        userIds: [patient.userId].filter(Boolean) as string[],
+      },
+      "INVOICE_CREATED",
+      { billId: createdBill?.id, invoiceNumber, totalAmount: financials.totalAmount }
+    );
+
     res.status(201).json(createdBill);
   } catch (error: any) {
     if (error instanceof z.ZodError) return res.status(400).json({ error: "Validation failed", details: error.errors });
@@ -489,19 +584,39 @@ router.put("/:id/pay", authenticateToken as any, async (req: AuthenticatedReques
         },
       });
 
-      // Notification
-      if (bill.patient?.user?.id) {
-        await tx.notification.create({
-          data: {
-            userId: bill.patient.user.id,
-            title: "Payment Received",
-            message: `Payment of $${totalAmount.toFixed(2)} received for Invoice #${bill.invoiceNumber || bill.id} via ${validated.paymentMethod}.`,
-          },
-        });
-      }
-
       return b;
     });
+
+    // Notify Patient
+    if (bill.patient?.user?.id) {
+      await notificationService.createAndSendNotification({
+        userId: bill.patient.user.id,
+        title: "Payment Receipt Confirmed",
+        message: `Payment of $${totalAmount.toFixed(2)} received for Invoice #${bill.invoiceNumber || bill.id} via ${validated.paymentMethod}.`,
+        type: "BILLING",
+        link: "/billing",
+        metadata: { billId: bill.id, invoiceNumber: bill.invoiceNumber },
+      });
+    }
+
+    // Notify Receptionist
+    await notificationService.notifyRole("RECEPTIONIST", {
+      title: "Invoice Settled",
+      message: `Patient ${bill.patient.name} cleared Invoice #${bill.invoiceNumber || bill.id} ($${totalAmount.toFixed(2)} via ${validated.paymentMethod}).`,
+      type: "BILLING",
+      link: "/billing",
+      metadata: { billId: bill.id, invoiceNumber: bill.invoiceNumber },
+    });
+
+    // Broadcast Real-time event
+    notificationService.broadcastHospitalEvent(
+      {
+        roles: ["RECEPTIONIST", "ADMIN"],
+        userIds: [bill.patient?.user?.id].filter(Boolean) as string[],
+      },
+      "PAYMENT_RECEIVED",
+      { billId: bill.id, invoiceNumber: bill.invoiceNumber, amount: totalAmount }
+    );
 
     res.json({
       message: "Payment processed successfully",
@@ -557,6 +672,28 @@ router.put("/:id/cancel", authenticateToken as any, requireRoles(["RECEPTIONIST"
       return b;
     });
 
+    // Notify Patient
+    if (bill.patient?.userId) {
+      await notificationService.createAndSendNotification({
+        userId: bill.patient.userId,
+        title: "Invoice Cancelled",
+        message: `Hospital invoice #${bill.invoiceNumber || bill.id} has been cancelled.${reason ? ` Reason: ${reason}` : ""}`,
+        type: "BILLING",
+        link: "/billing",
+        metadata: { billId: bill.id },
+      });
+    }
+
+    // Broadcast Real-time event
+    notificationService.broadcastHospitalEvent(
+      {
+        roles: ["RECEPTIONIST", "ADMIN"],
+        userIds: [bill.patient?.userId].filter(Boolean) as string[],
+      },
+      "INVOICE_CANCELLED",
+      { billId: bill.id, invoiceNumber: bill.invoiceNumber }
+    );
+
     res.json({
       message: "Invoice cancelled successfully",
       bill: updated,
@@ -604,6 +741,37 @@ router.put("/:id/refund", authenticateToken as any, requireRoles(["ADMIN"]), asy
 
       return b;
     });
+
+    // Notify Patient
+    if (bill.patient?.userId) {
+      await notificationService.createAndSendNotification({
+        userId: bill.patient.userId,
+        title: "Invoice Refund Processed",
+        message: `A refund of $${(bill.totalAmount ?? bill.amount).toFixed(2)} has been processed for Invoice #${bill.invoiceNumber || bill.id}.`,
+        type: "BILLING",
+        link: "/billing",
+        metadata: { billId: bill.id },
+      });
+    }
+
+    // Notify Receptionist
+    await notificationService.notifyRole("RECEPTIONIST", {
+      title: "Invoice Refunded",
+      message: `Invoice #${bill.invoiceNumber || bill.id} for ${bill.patient.name} has been refunded by administration.`,
+      type: "BILLING",
+      link: "/billing",
+      metadata: { billId: bill.id },
+    });
+
+    // Broadcast Real-time event
+    notificationService.broadcastHospitalEvent(
+      {
+        roles: ["RECEPTIONIST", "ADMIN"],
+        userIds: [bill.patient?.userId].filter(Boolean) as string[],
+      },
+      "INVOICE_REFUNDED",
+      { billId: bill.id, invoiceNumber: bill.invoiceNumber }
+    );
 
     res.json({
       message: "Invoice refunded successfully",
