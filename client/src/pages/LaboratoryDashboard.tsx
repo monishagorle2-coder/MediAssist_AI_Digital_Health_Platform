@@ -14,7 +14,8 @@ import {
   UserCheck, 
   X,
   Trash2,
-  Printer
+  Printer,
+  Scan
 } from "lucide-react";
 
 interface LaboratoryDashboardProps {
@@ -206,6 +207,40 @@ export const LaboratoryDashboard: React.FC<LaboratoryDashboardProps> = ({ active
     } finally {
       setSubmittingResults(false);
     }
+  };
+
+  const handleLabOcrUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert("File exceeds 5MB size limit.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const base64Data = reader.result as string;
+        const res = await api.post("/ai/ocr", {
+          fileData: base64Data,
+          fileName: file.name,
+          fileType: file.type || "application/pdf",
+          documentCategory: "LAB_REPORT",
+        });
+
+        if (res.data.structuredFields?.testParameters) {
+          setParameterRows(res.data.structuredFields.testParameters);
+        }
+        if (res.data.structuredFields?.clinicalImpression) {
+          setClinicalSummary(res.data.structuredFields.clinicalImpression);
+        }
+        alert("OCR parsed successfully! Please review and verify parameters before submitting.");
+      } catch (err: any) {
+        alert(err.response?.data?.error || "Failed to extract parameters via OCR.");
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleAddTestToCatalog = async (e: React.FormEvent) => {
@@ -574,14 +609,26 @@ export const LaboratoryDashboard: React.FC<LaboratoryDashboardProps> = ({ active
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-slate-200 text-xs">Analytical Parameters & Measurements</span>
-                  <button
-                    type="button"
-                    onClick={handleAddParamRow}
-                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-emerald-400 font-semibold rounded-lg border border-slate-700 flex items-center space-x-1"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    <span>Add Parameter</span>
-                  </button>
+                  <div className="flex items-center space-x-2">
+                    <label className="px-2.5 py-1 bg-purple-950/60 hover:bg-purple-900/60 text-purple-300 font-semibold rounded-lg border border-purple-800/60 flex items-center space-x-1 cursor-pointer transition-all">
+                      <Scan className="h-3.5 w-3.5 text-purple-400" />
+                      <span>AI OCR Scan</span>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg,image/webp,application/pdf"
+                        onChange={handleLabOcrUpload}
+                        className="hidden"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleAddParamRow}
+                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-emerald-400 font-semibold rounded-lg border border-slate-700 flex items-center space-x-1"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>Add Parameter</span>
+                    </button>
+                  </div>
                 </div>
 
                 <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">

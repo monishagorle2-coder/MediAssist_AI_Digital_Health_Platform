@@ -3,6 +3,7 @@ import { z } from "zod";
 import prisma from "../db";
 import { AuthenticatedRequest, authenticateToken } from "../middlewares/auth";
 import { notificationService } from "../services/notificationService";
+import { CommunicationService } from "../services/communicationService";
 
 const router = Router();
 
@@ -69,7 +70,7 @@ router.put("/:id/confirm", authenticateToken as any, async (req: AuthenticatedRe
 
     const record = await prisma.diagnosisRecord.findUnique({
       where: { id },
-      include: { patient: true }
+      include: { patient: true, doctor: true }
     });
 
     if (!record) {
@@ -121,6 +122,21 @@ router.put("/:id/confirm", authenticateToken as any, async (req: AuthenticatedRe
       "DIAGNOSIS_CONFIRMED",
       { diagnosisId: id, patientId: record.patientId, finalDiagnosis }
     );
+
+    // Multi-channel Communication Dispatch
+    await CommunicationService.dispatch({
+      userId: record.patient.userId,
+      patientId: record.patientId,
+      category: "CLINICAL",
+      type: "DIAGNOSIS_CONFIRMED",
+      title: "Diagnosis Report Confirmed",
+      message: `Your medical diagnosis of '${finalDiagnosis}' has been confirmed by Dr. ${record.doctor.name}. Complete clinical report is published to your records.`,
+      recipientEmail: (record.patient as any)?.user?.email,
+      recipientPhone: record.patient.phone,
+      relatedEntityId: id,
+      idempotencyKey: `DIAG-CONFIRM-${id}`,
+      ipAddress: req.ip || req.socket?.remoteAddress || undefined,
+    });
 
     res.json(updatedRecord);
   } catch (error: any) {

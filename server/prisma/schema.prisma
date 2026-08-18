@@ -8,16 +8,20 @@ generator client {
 }
 
 model User {
-  id           String         @id @default(uuid())
-  email        String         @unique
-  passwordHash String
-  role         String         // "PATIENT" | "DOCTOR" | "RECEPTIONIST" | "PHARMACIST" | "ADMIN"
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  patient      Patient?
-  doctor       Doctor?
-  auditLogs    AuditLog[]
-  notifications Notification[]
+  id            String         @id @default(uuid())
+  email         String         @unique
+  passwordHash  String
+  role          String         // "PATIENT" | "DOCTOR" | "RECEPTIONIST" | "PHARMACIST" | "LAB_TECHNICIAN" | "ADMIN"
+  isActive      Boolean        @default(true)
+  lastLoginAt   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  patient                Patient?
+  doctor                 Doctor?
+  auditLogs              AuditLog[]
+  notifications          Notification[]
+  notificationPreference NotificationPreference?
+  communicationLogs      CommunicationLog[]
 }
 
 model Patient {
@@ -44,6 +48,7 @@ model Patient {
   insuranceNumber  String?
   vitals           Vitals[]
   labOrders        LabOrder[]
+  dischargeSummaries DischargeSummary[]
 }
 
 model Doctor {
@@ -64,6 +69,7 @@ model Doctor {
   prescriptions    Prescription[]
   doctorSchedules  DoctorSchedule[]
   labOrders        LabOrder[]
+  dischargeSummaries DischargeSummary[]
 }
 
 model Department {
@@ -97,6 +103,7 @@ model Appointment {
   bill                    Bill?
   vitals                  Vitals[]
   labOrders               LabOrder[]
+  dischargeSummary        DischargeSummary?
 }
 
 model DiagnosisRecord {
@@ -301,4 +308,58 @@ model LabResult {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 }
+
+model DischargeSummary {
+  id                    String       @id @default(uuid())
+  summaryNumber         String       @unique // e.g. "DS-20260818-XXXX"
+  patientId             String
+  patient               Patient      @relation(fields: [patientId], references: [id])
+  doctorId              String
+  doctor                Doctor       @relation(fields: [doctorId], references: [id])
+  appointmentId         String?      @unique
+  appointment           Appointment? @relation(fields: [appointmentId], references: [id])
+  admissionSummary      String
+  primaryDiagnosis      String
+  investigationsSummary String?
+  treatmentGiven        String
+  dischargeMedications  String       // JSON string
+  followUpAdvice        String
+  status                String       @default("CONFIRMED") // "DRAFT" | "CONFIRMED"
+  signedAt              DateTime     @default(now())
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+}
+
+model NotificationPreference {
+  id                   String   @id @default(uuid())
+  userId               String   @unique
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointmentReminders Boolean  @default(true)
+  labResults           Boolean  @default(true)
+  billingAlerts        Boolean  @default(true)
+  clinicalUpdates      Boolean  @default(true)
+  emailEnabled         Boolean  @default(true)
+  smsEnabled           Boolean  @default(true)
+  inAppEnabled         Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model CommunicationLog {
+  id              String    @id @default(uuid())
+  userId          String?
+  user            User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  type            String    // APPOINTMENT_CONFIRMATION | APPOINTMENT_REMINDER | APPOINTMENT_CANCELLED | LAB_SAMPLE_COLLECTED | LAB_REPORT_READY | DIAGNOSIS_CONFIRMED | PRESCRIPTION_ISSUED | DISCHARGE_SUMMARY_CONFIRMED | INVOICE_GENERATED | PAYMENT_RECEIVED | REFUND_PROCESSED | SYSTEM_ALERT
+  channel         String    // IN_APP | EMAIL | SMS
+  recipient       String    // email address or phone or userId
+  title           String
+  content         String
+  status          String    @default("SENT") // SENT | FAILED | SKIPPED_PREFERENCE
+  sentAt          DateTime? @default(now())
+  failureReason   String?
+  idempotencyKey  String?   @unique
+  relatedEntityId String?
+  createdAt       DateTime  @default(now())
+}
+
 

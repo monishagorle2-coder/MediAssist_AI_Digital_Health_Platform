@@ -4,6 +4,7 @@ import prisma from "../db";
 import { AuthenticatedRequest, authenticateToken, requireRoles } from "../middlewares/auth";
 import { generateInvoiceNumber } from "./billing";
 import { notificationService } from "../services/notificationService";
+import { CommunicationService } from "../services/communicationService";
 
 const router = Router();
 
@@ -801,6 +802,21 @@ router.post("/", authenticateToken as any, async (req: AuthenticatedRequest, res
       { appointmentId: appointment.id, doctorId: doctor.id, patientId: patient.id }
     );
 
+    // Multi-channel Communication Dispatch
+    await CommunicationService.dispatch({
+      userId: patient.userId,
+      patientId: patient.id,
+      category: "APPOINTMENT",
+      type: "APPOINTMENT_CONFIRMATION",
+      title: "Appointment Confirmed",
+      message: `Your consultation with Dr. ${doctor.name} is confirmed for ${slotDateTime.toLocaleDateString()} at ${slotDateTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`,
+      recipientEmail: (patient as any).user?.email,
+      recipientPhone: patient.phone,
+      relatedEntityId: appointment.id,
+      idempotencyKey: `APPT-CONFIRM-${appointment.id}`,
+      ipAddress: req.ip || req.socket?.remoteAddress || undefined,
+    });
+
     res.status(201).json(appointment);
   } catch (error: any) {
     if (error instanceof z.ZodError) {
@@ -924,6 +940,21 @@ router.put("/:id", authenticateToken as any, async (req: AuthenticatedRequest, r
         "APPOINTMENT_CANCELLED",
         { appointmentId: id }
       );
+
+      // Multi-channel Communication Dispatch
+      await CommunicationService.dispatch({
+        userId: appointment.patient.userId,
+        patientId: appointment.patientId,
+        category: "APPOINTMENT",
+        type: "APPOINTMENT_CANCELLED",
+        title: "Appointment Cancelled",
+        message: `Your appointment with Dr. ${appointment.doctor.name} has been cancelled.`,
+        recipientEmail: (appointment.patient as any).user?.email,
+        recipientPhone: appointment.patient.phone,
+        relatedEntityId: appointment.id,
+        idempotencyKey: `APPT-CANCEL-${appointment.id}`,
+        ipAddress: req.ip || req.socket?.remoteAddress || undefined,
+      });
     }
 
     res.json(updated);
@@ -932,6 +963,42 @@ router.put("/:id", authenticateToken as any, async (req: AuthenticatedRequest, r
       return res.status(400).json({ error: "Validation failed", details: error.errors });
     }
     res.status(500).json({ error: "Failed to update appointment", details: error.message });
+  }
+});
+
+// Get single appointment by ID (Strict Role & Ownership Verification)
+router.get("/:id", authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const appointment = await prisma.appointment.findUnique({
+      where: { id },
+      include: {
+        patient: true,
+        doctor: { include: { department: true } },
+        diagnosisRecord: true,
+        prescription: true,
+        bill: true,
+        vitals: true,
+      },
+    });
+
+    if (!appointment) {
+      return res.status(404).json({ error: "Appointment not found" });
+    }
+
+    // IDOR Security Checks
+    if (req.user?.role === "PATIENT" && appointment.patientId !== req.user.patientId) {
+      return res.status(403).json({ error: "Forbidden: You cannot access another patient's appointment" });
+    }
+
+    if (req.user?.role === "DOCTOR" && appointment.doctorId !== req.user.doctorId) {
+      return res.status(403).json({ error: "Forbidden: You can only access appointments assigned to you" });
+    }
+
+    res.json(appointment);
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch appointment", details: error.message });
   }
 });
 

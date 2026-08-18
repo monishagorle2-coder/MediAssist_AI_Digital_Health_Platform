@@ -3,6 +3,7 @@ import { z } from "zod";
 import prisma from "../db";
 import { AuthenticatedRequest, authenticateToken, requireRoles } from "../middlewares/auth";
 import { notificationService } from "../services/notificationService";
+import { CommunicationService } from "../services/communicationService";
 
 const router = Router();
 
@@ -519,6 +520,21 @@ router.post("/", authenticateToken as any, requireRoles(["RECEPTIONIST", "ADMIN"
       { billId: createdBill?.id, invoiceNumber, totalAmount: financials.totalAmount }
     );
 
+    // Multi-channel Communication Dispatch for Patient
+    await CommunicationService.dispatch({
+      userId: patient.userId,
+      patientId: patient.id,
+      category: "BILLING",
+      type: "INVOICE_GENERATED",
+      title: "Hospital Invoice Generated",
+      message: `Hospital invoice #${invoiceNumber} for $${financials.totalAmount.toFixed(2)} is ready. You can review and complete payment online.`,
+      recipientEmail: (patient as any)?.user?.email,
+      recipientPhone: patient.phone,
+      relatedEntityId: createdBill?.id,
+      idempotencyKey: `INV-${createdBill?.id}`,
+      ipAddress: req.ip || req.socket?.remoteAddress || undefined,
+    });
+
     res.status(201).json(createdBill);
   } catch (error: any) {
     if (error instanceof z.ZodError) return res.status(400).json({ error: "Validation failed", details: error.errors });
@@ -617,6 +633,21 @@ router.put("/:id/pay", authenticateToken as any, async (req: AuthenticatedReques
       "PAYMENT_RECEIVED",
       { billId: bill.id, invoiceNumber: bill.invoiceNumber, amount: totalAmount }
     );
+
+    // Multi-channel Communication Dispatch for Patient
+    await CommunicationService.dispatch({
+      userId: bill.patient?.user?.id,
+      patientId: bill.patientId,
+      category: "BILLING",
+      type: "PAYMENT_RECEIVED",
+      title: "Payment Receipt Confirmed",
+      message: `Payment of $${totalAmount.toFixed(2)} received for Invoice #${bill.invoiceNumber || bill.id} via ${validated.paymentMethod}. Transaction ref: ${updated.transactionReference}.`,
+      recipientEmail: bill.patient?.user?.email,
+      recipientPhone: bill.patient?.phone,
+      relatedEntityId: bill.id,
+      idempotencyKey: `PAY-${bill.id}-${updated.transactionReference}`,
+      ipAddress: req.ip || req.socket?.remoteAddress || undefined,
+    });
 
     res.json({
       message: "Payment processed successfully",
@@ -772,6 +803,21 @@ router.put("/:id/refund", authenticateToken as any, requireRoles(["ADMIN"]), asy
       "INVOICE_REFUNDED",
       { billId: bill.id, invoiceNumber: bill.invoiceNumber }
     );
+
+    // Multi-channel Communication Dispatch for Patient
+    await CommunicationService.dispatch({
+      userId: bill.patient?.userId,
+      patientId: bill.patientId,
+      category: "BILLING",
+      type: "REFUND_PROCESSED",
+      title: "Invoice Refund Processed",
+      message: `A refund of $${(bill.totalAmount ?? bill.amount).toFixed(2)} has been processed for Invoice #${bill.invoiceNumber || bill.id}.${reason ? ` Reason: ${reason}` : ""}`,
+      recipientEmail: (bill.patient as any)?.user?.email,
+      recipientPhone: bill.patient?.phone,
+      relatedEntityId: bill.id,
+      idempotencyKey: `REFUND-${bill.id}`,
+      ipAddress: req.ip || req.socket?.remoteAddress || undefined,
+    });
 
     res.json({
       message: "Invoice refunded successfully",

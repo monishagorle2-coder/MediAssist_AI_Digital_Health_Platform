@@ -3,7 +3,26 @@ import api from "../services/api";
 import type { Appointment, Medicine, Vitals, LabOrder, LabTest } from "../types";
 import { ClinicalDocumentModal } from "../components/ClinicalDocumentModal";
 import { MedicalTimelineView } from "../components/MedicalTimelineView";
-import { Stethoscope, Activity, Pill, CheckCircle2, Sparkles, ChevronRight, HeartPulse, X, AlertTriangle, FlaskConical, FileText, Plus, Printer, History } from "lucide-react";
+import { 
+  Stethoscope, 
+  Activity, 
+  Pill, 
+  CheckCircle2, 
+  Sparkles, 
+  ChevronRight, 
+  HeartPulse, 
+  X, 
+  AlertTriangle, 
+  FlaskConical, 
+  FileText, 
+  Plus, 
+  Printer, 
+  History,
+  Scan,
+  Mic,
+  FileCheck2,
+  Upload
+} from "lucide-react";
 
 interface DoctorDashboardProps {
   activeTab: string;
@@ -13,6 +32,25 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [selectedApp, setSelectedApp] = useState<Appointment | null>(null);
   const [medicinesInventory, setMedicinesInventory] = useState<Medicine[]>([]);
+
+  // Advanced AI OCR State
+  const [showOcrModal, setShowOcrModal] = useState(false);
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrCategory, setOcrCategory] = useState<"LAB_REPORT" | "PRESCRIPTION" | "MEDICAL_DOCUMENT" | "GENERAL">("LAB_REPORT");
+  const [ocrResult, setOcrResult] = useState<any>(null);
+  const [ocrFileName, setOcrFileName] = useState("");
+
+  // Advanced AI Voice Dictation State
+  const [showVoiceModal, setShowVoiceModal] = useState(false);
+  const [voiceLoading, setVoiceLoading] = useState(false);
+  const [voiceDictationText, setVoiceDictationText] = useState("");
+  const [voiceResult, setVoiceResult] = useState<any>(null);
+
+  // Advanced AI Discharge Summary State
+  const [showDischargeModal, setShowDischargeModal] = useState(false);
+  const [dischargeLoading, setDischargeLoading] = useState(false);
+  const [dischargeDraft, setDischargeDraft] = useState<any>(null);
+  const [dischargeConfirmLoading, setDischargeConfirmLoading] = useState(false);
 
   // Lab & Diagnostics State
   const [labOrders, setLabOrders] = useState<LabOrder[]>([]);
@@ -210,6 +248,102 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
       setVitalsError(err.response?.data?.error || "Failed to record vitals");
     } finally {
       setSaveVitalsLoading(false);
+    }
+  };
+
+  // AI OCR Upload Handler
+  const handleOcrFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert("File size exceeds 5MB limit. Please upload a smaller document.");
+      return;
+    }
+
+    setOcrFileName(file.name);
+    setOcrLoading(true);
+    setOcrResult(null);
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const base64Data = reader.result as string;
+        const res = await api.post("/ai/ocr", {
+          fileData: base64Data,
+          fileName: file.name,
+          fileType: file.type || "application/pdf",
+          documentCategory: ocrCategory,
+          patientId: selectedApp?.patientId || undefined,
+        });
+        setOcrResult(res.data);
+      } catch (err: any) {
+        alert(err.response?.data?.error || "Failed to process OCR document.");
+      } finally {
+        setOcrLoading(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // AI Voice Dictation Handler
+  const handleVoiceTranscribe = async () => {
+    setVoiceLoading(true);
+    try {
+      const res = await api.post("/ai/voice-transcribe", {
+        dictationText: voiceDictationText || undefined,
+        patientId: selectedApp?.patientId || undefined,
+        appointmentId: selectedApp?.id || undefined,
+      });
+      setVoiceResult(res.data);
+    } catch (err: any) {
+      alert(err.response?.data?.error || "Failed to transcribe voice dictation.");
+    } finally {
+      setVoiceLoading(false);
+    }
+  };
+
+  // AI Discharge Summary Generator
+  const handleGenerateDischargeSummary = async () => {
+    if (!selectedApp) return;
+    setDischargeLoading(true);
+    try {
+      const res = await api.post("/ai/discharge-summary", {
+        patientId: selectedApp.patientId,
+        appointmentId: selectedApp.id,
+      });
+      setDischargeDraft(res.data);
+      setShowDischargeModal(true);
+    } catch (err: any) {
+      alert(err.response?.data?.error || "Failed to generate discharge summary draft.");
+    } finally {
+      setDischargeLoading(false);
+    }
+  };
+
+  const handleConfirmDischargeSummary = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dischargeDraft || !selectedApp) return;
+
+    setDischargeConfirmLoading(true);
+    try {
+      const res = await api.post("/ai/discharge-summary/confirm", {
+        patientId: selectedApp.patientId,
+        appointmentId: selectedApp.id,
+        admissionSummary: dischargeDraft.admissionSummary,
+        primaryDiagnosis: dischargeDraft.primaryDiagnosis,
+        investigationsSummary: dischargeDraft.investigationsSummary,
+        treatmentGiven: dischargeDraft.treatmentGiven,
+        dischargeMedications: dischargeDraft.dischargeMedications,
+        followUpAdvice: dischargeDraft.followUpAdvice,
+      });
+
+      alert(`Official Discharge Summary (${res.data.dischargeSummary.summaryNumber}) signed and added to EHR timeline!`);
+      setShowDischargeModal(false);
+    } catch (err: any) {
+      alert(err.response?.data?.error || "Failed to sign discharge summary.");
+    } finally {
+      setDischargeConfirmLoading(false);
     }
   };
 
@@ -607,6 +741,31 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
                   >
                     <History className="h-4 w-4 text-cyan-400" />
                     <span>EHR Timeline</span>
+                  </button>
+
+                  <button
+                    onClick={() => setShowOcrModal(true)}
+                    className="px-3 py-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 text-xs font-semibold flex items-center space-x-1.5 transition-all"
+                  >
+                    <Scan className="h-4 w-4 text-purple-400" />
+                    <span>AI OCR</span>
+                  </button>
+
+                  <button
+                    onClick={() => setShowVoiceModal(true)}
+                    className="px-3 py-2 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-xs font-semibold flex items-center space-x-1.5 transition-all"
+                  >
+                    <Mic className="h-4 w-4 text-indigo-400" />
+                    <span>Voice Dictation</span>
+                  </button>
+
+                  <button
+                    onClick={handleGenerateDischargeSummary}
+                    disabled={dischargeLoading}
+                    className="px-3 py-2 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 border border-teal-500/30 text-xs font-semibold flex items-center space-x-1.5 transition-all"
+                  >
+                    <FileCheck2 className="h-4 w-4 text-teal-400" />
+                    <span>{dischargeLoading ? "Drafting..." : "Discharge Summary"}</span>
                   </button>
 
                   <button
@@ -1335,6 +1494,287 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
             </div>
 
             <MedicalTimelineView patientId={selectedApp.patientId} />
+          </div>
+        </div>
+      )}
+
+      {/* AI OCR SCANNER MODAL */}
+      {showOcrModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-100 flex items-center space-x-2">
+                <Scan className="h-5 w-5 text-purple-400" />
+                <span>AI Document & Diagnostic Report OCR Scanner</span>
+              </h3>
+              <button onClick={() => setShowOcrModal(false)} className="text-slate-400 hover:text-slate-200">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="flex items-center space-x-3 text-xs">
+                <label className="text-slate-400 font-semibold">Document Type:</label>
+                <select
+                  value={ocrCategory}
+                  onChange={(e: any) => setOcrCategory(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 text-slate-200 rounded-lg px-3 py-1.5 text-xs focus:border-purple-500 focus:outline-none"
+                >
+                  <option value="LAB_REPORT">Laboratory Diagnostic Report</option>
+                  <option value="PRESCRIPTION">Handwritten / Printed Prescription</option>
+                  <option value="MEDICAL_DOCUMENT">Clinical History / Prior Notes</option>
+                  <option value="GENERAL">General Medical Document</option>
+                </select>
+              </div>
+
+              {/* File Upload Box */}
+              <div className="border-2 border-dashed border-slate-750 hover:border-purple-500/50 bg-slate-950/60 rounded-xl p-6 text-center transition-all">
+                <Upload className="h-8 w-8 text-purple-400 mx-auto mb-2 opacity-80" />
+                <p className="text-xs text-slate-300 font-semibold">Upload medical scan, photo, or PDF report</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">PNG, JPEG, JPG, WEBP, or PDF up to 5MB</p>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp,application/pdf"
+                  onChange={handleOcrFileSelect}
+                  className="mt-3 text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-purple-600 file:text-white hover:file:bg-purple-500 cursor-pointer"
+                />
+              </div>
+
+              {ocrLoading && (
+                <div className="p-4 bg-purple-950/30 border border-purple-800/40 rounded-xl text-center space-y-2">
+                  <Sparkles className="h-5 w-5 text-purple-400 mx-auto animate-spin" />
+                  <p className="text-xs text-purple-300 font-semibold">Processing Optical Character Recognition & Clinical Parsing...</p>
+                </div>
+              )}
+
+              {ocrResult && (
+                <div className="space-y-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <span className="px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[10px] font-bold">
+                        {ocrResult.detectedDocumentType || "OCR Extracted Draft"}
+                      </span>
+                      {ocrFileName && <span className="text-slate-400 text-[11px] font-mono">{ocrFileName}</span>}
+                    </div>
+                    <span className="text-[10px] text-amber-400 font-medium">⚠️ Review required before clinical use</span>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-slate-400 font-semibold block">Extracted Clinical Content:</label>
+                    <pre className="bg-slate-900 p-3 rounded-lg text-xs text-slate-200 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto border border-slate-850">
+                      {ocrResult.extractedText}
+                    </pre>
+                  </div>
+
+                  <div className="flex justify-end space-x-2 pt-2 border-t border-slate-800">
+                    <button
+                      onClick={() => {
+                        setSymptomsInput((prev) => (prev ? `${prev}\n\n[OCR Notes]: ${ocrResult.extractedText}` : ocrResult.extractedText));
+                        setShowOcrModal(false);
+                        alert("Extracted clinical text inserted into consultation notes!");
+                      }}
+                      className="px-4 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
+                    >
+                      Insert into Consultation Notes
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI VOICE DICTATION MODAL */}
+      {showVoiceModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-100 flex items-center space-x-2">
+                <Mic className="h-5 w-5 text-indigo-400" />
+                <span>Doctor Clinical Voice Dictation & Notes Assistant</span>
+              </h3>
+              <button onClick={() => setShowVoiceModal(false)} className="text-slate-400 hover:text-slate-200">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-300">Dictated Clinical Observations:</label>
+                <textarea
+                  rows={4}
+                  value={voiceDictationText}
+                  onChange={(e) => setVoiceDictationText(e.target.value)}
+                  placeholder="Speak or type clinical notes (e.g. 'Patient presented with 3-day history of dry cough and mild fever. Chest examination reveals bilateral clear breath sounds. Blood pressure 120/80. Prescribe oral paracetamol and recommend 3 days rest...')"
+                  className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-xl p-3 text-xs focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-slate-500">Dictation will be transformed into structured clinical notes.</span>
+                <button
+                  onClick={handleVoiceTranscribe}
+                  disabled={voiceLoading}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md transition-all flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>{voiceLoading ? "Transcribing..." : "Synthesize Structured Notes"}</span>
+                </button>
+              </div>
+
+              {voiceResult && (
+                <div className="space-y-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 text-[10px] font-bold">
+                      Structured Clinical Draft
+                    </span>
+                    <span className="text-[10px] text-amber-400 font-medium">Doctor review & confirmation required</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 text-xs">
+                    <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-850">
+                      <span className="text-slate-400 font-semibold block text-[10px] uppercase">Chief Complaints:</span>
+                      <span className="text-slate-200">{voiceResult.structuredClinicalNote?.chiefComplaints}</span>
+                    </div>
+                    <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-850">
+                      <span className="text-slate-400 font-semibold block text-[10px] uppercase">Clinical Observations:</span>
+                      <span className="text-slate-200">{voiceResult.structuredClinicalNote?.clinicalObservations}</span>
+                    </div>
+                    <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-850">
+                      <span className="text-slate-400 font-semibold block text-[10px] uppercase">Provisional Impression:</span>
+                      <span className="text-slate-200">{voiceResult.structuredClinicalNote?.provisionalImpression}</span>
+                    </div>
+                    <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-850">
+                      <span className="text-slate-400 font-semibold block text-[10px] uppercase">Recommended Plan:</span>
+                      <span className="text-slate-200">{voiceResult.structuredClinicalNote?.recommendedPlan}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end space-x-2 pt-2 border-t border-slate-800">
+                    <button
+                      onClick={() => {
+                        const noteText = `${voiceResult.structuredClinicalNote?.chiefComplaints || ""}\nObservations: ${voiceResult.structuredClinicalNote?.clinicalObservations || ""}\nImpression: ${voiceResult.structuredClinicalNote?.provisionalImpression || ""}\nPlan: ${voiceResult.structuredClinicalNote?.recommendedPlan || ""}`;
+                        setSymptomsInput(noteText);
+                        setShowVoiceModal(false);
+                        alert("Structured voice notes inserted into consultation!");
+                      }}
+                      className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
+                    >
+                      Insert into Consultation Form
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI DISCHARGE SUMMARY DRAFT & CONFIRM MODAL */}
+      {showDischargeModal && dischargeDraft && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-3xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-100 flex items-center space-x-2">
+                <FileCheck2 className="h-5 w-5 text-teal-400" />
+                <span>AI Clinical Discharge Summary — Review & Sign</span>
+              </h3>
+              <button onClick={() => setShowDischargeModal(false)} className="text-slate-400 hover:text-slate-200">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmDischargeSummary} className="space-y-4">
+              <div className="bg-teal-950/30 border border-teal-800/50 p-3 rounded-xl flex items-center justify-between text-xs">
+                <div>
+                  <span className="text-teal-300 font-bold">Patient: {dischargeDraft.patient?.name}</span>
+                  <span className="text-slate-400 ml-2">({dischargeDraft.patient?.gender}, {dischargeDraft.patient?.bloodGroup})</span>
+                </div>
+                <span className="px-2.5 py-0.5 rounded-full bg-teal-500/20 text-teal-300 border border-teal-500/40 text-[10px] font-bold">
+                  Status: AI DRAFT
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 text-xs">
+                <div className="space-y-1">
+                  <label className="text-slate-300 font-semibold">Admission / Visit Summary</label>
+                  <textarea
+                    rows={2}
+                    value={dischargeDraft.admissionSummary}
+                    onChange={(e) => setDischargeDraft({ ...dischargeDraft, admissionSummary: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-200 focus:border-teal-500 focus:outline-none"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-slate-300 font-semibold">Primary Confirmed Diagnosis</label>
+                  <input
+                    type="text"
+                    value={dischargeDraft.primaryDiagnosis}
+                    onChange={(e) => setDischargeDraft({ ...dischargeDraft, primaryDiagnosis: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-200 focus:border-teal-500 focus:outline-none"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-slate-300 font-semibold">Diagnostic Investigations Summary</label>
+                  <textarea
+                    rows={2}
+                    value={dischargeDraft.investigationsSummary || ""}
+                    onChange={(e) => setDischargeDraft({ ...dischargeDraft, investigationsSummary: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-200 focus:border-teal-500 focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-slate-300 font-semibold">Treatment Provided During Visit</label>
+                  <textarea
+                    rows={2}
+                    value={dischargeDraft.treatmentGiven}
+                    onChange={(e) => setDischargeDraft({ ...dischargeDraft, treatmentGiven: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-200 focus:border-teal-500 focus:outline-none"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-slate-300 font-semibold">Follow-Up Advice & Precautions</label>
+                  <textarea
+                    rows={2}
+                    value={dischargeDraft.followUpAdvice}
+                    onChange={(e) => setDischargeDraft({ ...dischargeDraft, followUpAdvice: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-200 focus:border-teal-500 focus:outline-none"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-3 border-t border-slate-800">
+                <span className="text-[11px] text-slate-400">
+                  Signing this summary publishes it as an official document to the patient's EHR record.
+                </span>
+                <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowDischargeModal(false)}
+                    className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold text-xs hover:bg-slate-700"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={dischargeConfirmLoading}
+                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-teal-600 to-emerald-500 hover:from-teal-500 hover:to-emerald-400 text-white font-bold text-xs shadow-lg flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <FileCheck2 className="h-4 w-4" />
+                    <span>{dischargeConfirmLoading ? "Signing..." : "Sign & Publish Official Summary"}</span>
+                  </button>
+                </div>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useRealtimeNotifications } from "../hooks/useRealtimeNotifications";
+import api from "../services/api";
 import { 
   Activity, 
   Bell, 
@@ -16,13 +17,105 @@ import {
   FileText, 
   Trash2, 
   CheckCheck,
-  Radio
+  Radio,
+  KeyRound,
+  X,
+  SlidersHorizontal,
+  Mail,
+  MessageSquare,
+  BellRing
 } from "lucide-react";
 
 export const Navbar: React.FC = () => {
   const { user, logout } = useAuth();
   const [showNotifications, setShowNotifications] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Password Change State
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordSuccess, setPasswordSuccess] = useState("");
+  const [passwordLoading, setPasswordLoading] = useState(false);
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordError("");
+    setPasswordSuccess("");
+
+    if (newPassword.length < 6) {
+      setPasswordError("New password must be at least 6 characters long");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError("New passwords do not match");
+      return;
+    }
+
+    setPasswordLoading(true);
+    try {
+      await api.post("/auth/change-password", {
+        currentPassword,
+        newPassword,
+      });
+      setPasswordSuccess("Password updated successfully!");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setTimeout(() => {
+        setShowPasswordModal(false);
+        setPasswordSuccess("");
+      }, 1500);
+    } catch (err: any) {
+      setPasswordError(err.response?.data?.error || "Failed to update password");
+    } finally {
+      setPasswordLoading(false);
+    }
+  };
+
+  // Notification Preferences State
+  const [showPreferencesModal, setShowPreferencesModal] = useState(false);
+  const [preferences, setPreferences] = useState({
+    appointmentReminders: true,
+    labResults: true,
+    billingAlerts: true,
+    clinicalUpdates: true,
+    emailEnabled: true,
+    smsEnabled: true,
+    inAppEnabled: true,
+  });
+  const [prefsLoading, setPrefsLoading] = useState(false);
+  const [prefsSaving, setPrefsSaving] = useState(false);
+  const [prefsMessage, setPrefsMessage] = useState("");
+
+  const fetchPreferences = async () => {
+    setPrefsLoading(true);
+    try {
+      const res = await api.get("/communications/preferences");
+      setPreferences(res.data);
+    } catch (err) {
+      console.error("Failed to load notification preferences", err);
+    } finally {
+      setPrefsLoading(false);
+    }
+  };
+
+  const handleSavePreferences = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPrefsSaving(true);
+    setPrefsMessage("");
+    try {
+      await api.put("/communications/preferences", preferences);
+      setPrefsMessage("Preferences updated successfully!");
+      setTimeout(() => setPrefsMessage(""), 2000);
+    } catch (err: any) {
+      setPrefsMessage(err.response?.data?.error || "Failed to update preferences");
+    } finally {
+      setPrefsSaving(false);
+    }
+  };
 
   const {
     notifications,
@@ -178,15 +271,29 @@ export const Navbar: React.FC = () => {
                       )}
                     </div>
 
-                    {unreadCount > 0 && (
+                    <div className="flex items-center space-x-2">
                       <button
-                        onClick={markAllAsRead}
-                        className="text-[11px] text-cyan-400 hover:text-cyan-300 font-semibold flex items-center space-x-1"
+                        onClick={() => {
+                          fetchPreferences();
+                          setShowPreferencesModal(true);
+                        }}
+                        className="text-[11px] text-slate-400 hover:text-slate-200 font-semibold flex items-center space-x-1 px-1.5 py-0.5 rounded hover:bg-slate-800 transition-all"
+                        title="Configure Notification Preferences"
                       >
-                        <CheckCheck className="h-3.5 w-3.5" />
-                        <span>Mark all read</span>
+                        <SlidersHorizontal className="h-3.5 w-3.5" />
+                        <span>Preferences</span>
                       </button>
-                    )}
+
+                      {unreadCount > 0 && (
+                        <button
+                          onClick={markAllAsRead}
+                          className="text-[11px] text-cyan-400 hover:text-cyan-300 font-semibold flex items-center space-x-1"
+                        >
+                          <CheckCheck className="h-3.5 w-3.5" />
+                          <span>Mark all read</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="max-h-80 overflow-y-auto divide-y divide-slate-800/80">
@@ -266,6 +373,19 @@ export const Navbar: React.FC = () => {
               </div>
             </div>
 
+            {/* Change Password Button */}
+            <button
+              onClick={() => {
+                setPasswordError("");
+                setPasswordSuccess("");
+                setShowPasswordModal(true);
+              }}
+              className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all text-xs flex items-center space-x-1"
+              title="Change My Password"
+            >
+              <KeyRound className="h-4 w-4 text-cyan-400" />
+            </button>
+
             {/* Logout */}
             <button
               onClick={logout}
@@ -279,6 +399,235 @@ export const Navbar: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* CHANGE PASSWORD MODAL */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-100 flex items-center space-x-2">
+                <KeyRound className="h-5 w-5 text-cyan-400" />
+                <span>Change Password</span>
+              </h3>
+              <button onClick={() => setShowPasswordModal(false)} className="text-slate-400 hover:text-slate-200">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {passwordError && (
+              <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-400 text-xs">
+                {passwordError}
+              </div>
+            )}
+            {passwordSuccess && (
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-xs flex items-center space-x-2">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>{passwordSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleChangePassword} className="space-y-3 text-xs">
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">Current Password *</label>
+                <input
+                  type="password"
+                  required
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">New Password *</label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="At least 6 characters"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">Confirm New Password *</label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-slate-100 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowPasswordModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={passwordLoading}
+                  className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs shadow-lg disabled:opacity-50"
+                >
+                  {passwordLoading ? "Updating..." : "Update Password"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* NOTIFICATION PREFERENCES MODAL */}
+      {showPreferencesModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-100 flex items-center space-x-2">
+                <SlidersHorizontal className="h-5 w-5 text-purple-400" />
+                <span>Hospital Notification & Alert Preferences</span>
+              </h3>
+              <button
+                onClick={() => setShowPreferencesModal(false)}
+                className="text-slate-400 hover:text-slate-200"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {prefsMessage && (
+              <div className="p-3 bg-purple-950/50 border border-purple-800 text-purple-300 rounded-xl text-xs flex items-center space-x-2">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-purple-400" />
+                <span>{prefsMessage}</span>
+              </div>
+            )}
+
+            {prefsLoading ? (
+              <div className="p-6 text-center text-xs text-slate-400">Loading preferences...</div>
+            ) : (
+              <form onSubmit={handleSavePreferences} className="space-y-4 text-xs">
+                {/* DELIVERY CHANNELS */}
+                <div className="space-y-2">
+                  <span className="font-bold text-slate-200 uppercase tracking-wider text-[10px] block">
+                    Communication Channels
+                  </span>
+                  <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2.5">
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div className="flex items-center space-x-2 text-slate-300">
+                        <BellRing className="h-4 w-4 text-purple-400" />
+                        <span>In-App Real-Time Notifications</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={preferences.inAppEnabled}
+                        onChange={(e) => setPreferences({ ...preferences, inAppEnabled: e.target.checked })}
+                        className="rounded border-slate-700 bg-slate-900 text-purple-500 focus:ring-purple-400"
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div className="flex items-center space-x-2 text-slate-300">
+                        <Mail className="h-4 w-4 text-cyan-400" />
+                        <span>Email Notifications</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={preferences.emailEnabled}
+                        onChange={(e) => setPreferences({ ...preferences, emailEnabled: e.target.checked })}
+                        className="rounded border-slate-700 bg-slate-900 text-cyan-500 focus:ring-cyan-400"
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div className="flex items-center space-x-2 text-slate-300">
+                        <MessageSquare className="h-4 w-4 text-emerald-400" />
+                        <span>SMS Text Alerts</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={preferences.smsEnabled}
+                        onChange={(e) => setPreferences({ ...preferences, smsEnabled: e.target.checked })}
+                        className="rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-emerald-400"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                {/* ALERT CATEGORIES */}
+                <div className="space-y-2">
+                  <span className="font-bold text-slate-200 uppercase tracking-wider text-[10px] block">
+                    Alert Categories & Updates
+                  </span>
+                  <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2.5">
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <span className="text-slate-300">Appointment Confirmations & Reminders</span>
+                      <input
+                        type="checkbox"
+                        checked={preferences.appointmentReminders}
+                        onChange={(e) => setPreferences({ ...preferences, appointmentReminders: e.target.checked })}
+                        className="rounded border-slate-700 bg-slate-900 text-purple-500 focus:ring-purple-400"
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <span className="text-slate-300">Laboratory & Diagnostic Report Ready</span>
+                      <input
+                        type="checkbox"
+                        checked={preferences.labResults}
+                        onChange={(e) => setPreferences({ ...preferences, labResults: e.target.checked })}
+                        className="rounded border-slate-700 bg-slate-900 text-cyan-500 focus:ring-cyan-400"
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <span className="text-slate-300">Hospital Billing, Invoices & Receipts</span>
+                      <input
+                        type="checkbox"
+                        checked={preferences.billingAlerts}
+                        onChange={(e) => setPreferences({ ...preferences, billingAlerts: e.target.checked })}
+                        className="rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-emerald-400"
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <span className="text-slate-300">Clinical Diagnosis & Prescriptions</span>
+                      <input
+                        type="checkbox"
+                        checked={preferences.clinicalUpdates}
+                        onChange={(e) => setPreferences({ ...preferences, clinicalUpdates: e.target.checked })}
+                        className="rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-amber-400"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="flex justify-end space-x-2 pt-3 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowPreferencesModal(false)}
+                    className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-semibold text-xs hover:bg-slate-700"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={prefsSaving}
+                    className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg disabled:opacity-50"
+                  >
+                    {prefsSaving ? "Saving..." : "Save Preferences"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </header>
   );
 };

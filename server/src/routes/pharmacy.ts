@@ -4,6 +4,7 @@ import prisma from "../db";
 import { AuthenticatedRequest, authenticateToken, requireRoles } from "../middlewares/auth";
 import { generateInvoiceNumber } from "./billing";
 import { notificationService } from "../services/notificationService";
+import { CommunicationService } from "../services/communicationService";
 
 const router = Router();
 
@@ -133,6 +134,21 @@ router.post("/prescriptions", authenticateToken as any, requireRoles(["DOCTOR"])
       { prescriptionId: prescription.id, patientId: validated.patientId }
     );
 
+    // Multi-channel Communication Dispatch for Patient
+    await CommunicationService.dispatch({
+      userId: patient?.userId,
+      patientId: validated.patientId,
+      category: "CLINICAL",
+      type: "PRESCRIPTION_ISSUED",
+      title: "Prescription Issued",
+      message: `A new electronic prescription with ${validated.medicines.length} medication(s) has been issued by your attending physician.`,
+      recipientEmail: (patient as any)?.user?.email,
+      recipientPhone: patient?.phone,
+      relatedEntityId: prescription.id,
+      idempotencyKey: `RX-${prescription.id}`,
+      ipAddress: req.ip || req.socket?.remoteAddress || undefined,
+    });
+
     res.status(201).json(prescription);
   } catch (error: any) {
     if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
@@ -181,6 +197,48 @@ router.get("/prescriptions", authenticateToken as any, async (req: Authenticated
     res.json(formatted);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// GET Single Prescription by ID (Strict Role & Ownership Enforcement)
+router.get("/prescriptions/:id", authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const prescription = await prisma.prescription.findUnique({
+      where: { id },
+      include: {
+        patient: true,
+        doctor: { include: { department: true } },
+        diagnosisRecord: true,
+        appointment: true,
+      },
+    });
+
+    if (!prescription) {
+      return res.status(404).json({ error: "Prescription not found" });
+    }
+
+    // IDOR Security Checks
+    if (req.user?.role === "PATIENT" && prescription.patientId !== req.user.patientId) {
+      return res.status(403).json({ error: "Forbidden: You are not authorized to view another patient's prescription" });
+    }
+
+    if (req.user?.role === "DOCTOR" && prescription.doctorId !== req.user.doctorId) {
+      return res.status(403).json({ error: "Forbidden: You are not authorized to view this prescription" });
+    }
+
+    const formatted = {
+      ...prescription,
+      medicines:
+        typeof prescription.medicines === "string"
+          ? JSON.parse(prescription.medicines)
+          : prescription.medicines,
+    };
+
+    res.json(formatted);
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch prescription", details: error.message });
   }
 });
 

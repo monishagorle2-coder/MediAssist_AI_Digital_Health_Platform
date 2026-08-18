@@ -4,6 +4,7 @@ import prisma from "../db";
 import { AuthenticatedRequest, authenticateToken, requireRoles } from "../middlewares/auth";
 import { generateInvoiceNumber } from "./billing";
 import { notificationService } from "../services/notificationService";
+import { CommunicationService } from "../services/communicationService";
 
 const router = Router();
 
@@ -583,6 +584,21 @@ router.put("/orders/:id/sample", authenticateToken as any, requireRoles(["LAB_TE
       { orderId: id, status: "SAMPLE_COLLECTED" }
     );
 
+    // Multi-channel Communication Dispatch
+    await CommunicationService.dispatch({
+      userId: order.patient?.userId,
+      patientId: order.patientId,
+      category: "LAB",
+      type: "LAB_SAMPLE_COLLECTED",
+      title: "Specimen Sample Collected",
+      message: `Your ${order.labTest.name} specimen (${order.labTest.sampleType}) has been collected and accessioned for laboratory processing.`,
+      recipientEmail: (order.patient as any)?.user?.email,
+      recipientPhone: order.patient?.phone,
+      relatedEntityId: id,
+      idempotencyKey: `LAB-SAMPLE-${id}`,
+      ipAddress: req.ip || req.socket?.remoteAddress || undefined,
+    });
+
     res.json({ message: "Specimen sample collected and logged", order: updated });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to update sample status", details: error.message });
@@ -697,6 +713,36 @@ router.post("/orders/:id/results", authenticateToken as any, requireRoles(["LAB_
       "LAB_REPORT_COMPLETED",
       { orderId: id, orderNumber: order.orderNumber, status: "COMPLETED" }
     );
+
+    // Multi-channel Communication Dispatch for Patient
+    await CommunicationService.dispatch({
+      userId: order.patient?.userId,
+      patientId: order.patientId,
+      category: "LAB",
+      type: "LAB_REPORT_READY",
+      title: "Diagnostic Report Published",
+      message: `Your diagnostic laboratory report for ${order.labTest.name} (${order.orderNumber}) is finalized and ready for review in your medical records.`,
+      recipientEmail: (order.patient as any)?.user?.email,
+      recipientPhone: order.patient?.phone,
+      relatedEntityId: id,
+      idempotencyKey: `LAB-REPORT-${id}`,
+      ipAddress: req.ip || req.socket?.remoteAddress || undefined,
+    });
+
+    // Multi-channel Communication Dispatch for Doctor
+    if (order.doctor?.userId) {
+      await CommunicationService.dispatch({
+        userId: order.doctor.userId,
+        category: "LAB",
+        type: "LAB_REPORT_READY",
+        title: "Lab Results Finalized",
+        message: `Diagnostic results for patient ${order.patient.name} (${order.labTest.name}) have been finalized by the pathologist.`,
+        recipientEmail: (order.doctor as any)?.user?.email || order.doctor.email,
+        relatedEntityId: id,
+        idempotencyKey: `LAB-DOC-${id}`,
+        ipAddress: req.ip || req.socket?.remoteAddress || undefined,
+      });
+    }
 
     res.status(201).json({
       message: "Lab report results entered and published successfully",

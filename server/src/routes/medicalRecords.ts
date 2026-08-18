@@ -42,7 +42,7 @@ router.get("/timeline/:patientId", authenticateToken as any, async (req: Authent
     }
 
     // Fetch all patient records in parallel
-    const [appointments, vitals, diagnoses, prescriptions, labOrders, bills] = await Promise.all([
+    const [appointments, vitals, diagnoses, prescriptions, labOrders, bills, dischargeSummaries] = await Promise.all([
       prisma.appointment.findMany({
         where: { patientId },
         include: {
@@ -94,6 +94,17 @@ router.get("/timeline/:patientId", authenticateToken as any, async (req: Authent
         where: { patientId },
         include: { billItems: true },
         orderBy: { createdAt: "desc" },
+      }),
+      prisma.dischargeSummary.findMany({
+        where: {
+          patientId,
+          ...(userRole === "PATIENT" ? { status: "CONFIRMED" } : {}),
+        },
+        include: {
+          doctor: { include: { department: true } },
+          appointment: true,
+        },
+        orderBy: { signedAt: "desc" },
       }),
     ]);
 
@@ -241,6 +252,30 @@ router.get("/timeline/:patientId", authenticateToken as any, async (req: Authent
           invoiceNumber: b.invoiceNumber,
           totalAmount: amount,
           paymentStatus: b.paymentStatus || b.status,
+        },
+      });
+    }
+
+    // Discharge Summaries
+    for (const ds of dischargeSummaries) {
+      events.push({
+        id: `ds-${ds.id}`,
+        category: "DISCHARGE_SUMMARY",
+        typeLabel: "Official Discharge Summary",
+        timestamp: ds.signedAt || ds.createdAt,
+        title: `Discharge Summary (${ds.summaryNumber})`,
+        subtitle: `Signed by Dr. ${ds.doctor.name} (${ds.doctor.department?.name || "General"})`,
+        status: ds.status,
+        doctorName: ds.doctor.name,
+        departmentName: ds.doctor.department?.name,
+        summary: `Diagnosis: ${ds.primaryDiagnosis} | Plan: ${ds.followUpAdvice}`,
+        metadata: {
+          dischargeSummaryId: ds.id,
+          summaryNumber: ds.summaryNumber,
+          primaryDiagnosis: ds.primaryDiagnosis,
+          admissionSummary: ds.admissionSummary,
+          treatmentGiven: ds.treatmentGiven,
+          followUpAdvice: ds.followUpAdvice,
         },
       });
     }
