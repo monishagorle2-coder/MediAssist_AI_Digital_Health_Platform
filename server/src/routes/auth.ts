@@ -37,10 +37,16 @@ const LoginSchema = z.object({
 router.post("/register", authLimiter, async (req, res) => {
   try {
     const validated = RegisterSchema.parse(req.body);
+    const normalizedEmail = validated.email.toLowerCase().trim();
     
     // Check if user exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email: validated.email },
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        email: {
+          equals: normalizedEmail,
+          mode: "insensitive",
+        },
+      },
     });
     if (existingUser) {
       return res.status(400).json({ error: "Email is already registered" });
@@ -52,7 +58,7 @@ router.post("/register", authLimiter, async (req, res) => {
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
-          email: validated.email,
+          email: normalizedEmail,
           passwordHash,
           role: "PATIENT",
         },
@@ -75,7 +81,7 @@ router.post("/register", authLimiter, async (req, res) => {
         data: {
           userId: user.id,
           action: "USER_REGISTER",
-          details: `Patient registered: ${validated.name} (${validated.email})`,
+          details: `Patient registered: ${validated.name} (${normalizedEmail})`,
           ipAddress: req.ip || req.socket?.remoteAddress || null,
         },
       });
@@ -101,8 +107,13 @@ router.post("/login", authLimiter, async (req, res) => {
   try {
     const { email, password } = LoginSchema.parse(req.body);
 
-    const user = await prisma.user.findUnique({
-      where: { email },
+    const user = await prisma.user.findFirst({
+      where: {
+        email: {
+          equals: email.trim(),
+          mode: "insensitive",
+        },
+      },
       include: {
         patient: true,
         doctor: true,

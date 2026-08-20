@@ -89,6 +89,18 @@ async function main() {
     }
   })
 
+  // Create Lab Technician User
+  const labPassword = await bcrypt.hash('LabPassword123!', 10)
+  await prisma.user.upsert({
+    where: { email: 'lab@mediassist.com' },
+    update: {},
+    create: {
+      email: 'lab@mediassist.com',
+      passwordHash: labPassword,
+      role: 'LAB_TECHNICIAN'
+    }
+  })
+
   console.log('Demo users created successfully!')
 }
 

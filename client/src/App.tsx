@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Navbar } from "./components/Navbar";
 import { Sidebar } from "./components/Sidebar";
-import { Login } from "./pages/Login";
+import { Home } from "./pages/Home";
 import { PatientDashboard } from "./pages/PatientDashboard";
 import { DoctorDashboard } from "./pages/DoctorDashboard";
 import { ReceptionistDashboard } from "./pages/ReceptionistDashboard";
@@ -26,8 +26,8 @@ const MainApp: React.FC = () => {
   }
 
   if (!user) {
-    return <Login />;
-  }
+  return <Home />;
+}
 
   // Set default initial tab based on role if activeTab is not set for that role
   const getDefaultTabForRole = () => {

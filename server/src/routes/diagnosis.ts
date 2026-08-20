@@ -32,21 +32,55 @@ router.post("/", authenticateToken as any, async (req: AuthenticatedRequest, res
       return res.status(400).json({ error: "Doctor profile not found for this user" });
     }
 
-   const record = await prisma.diagnosisRecord.create({
-  data: {
-    appointmentId: validated.appointmentId || null,
-    patientId: validated.patientId,
-    doctorId,
-    symptoms: validated.symptoms,
-    aiSuggestions: validated.aiSuggestions
-      ? typeof validated.aiSuggestions === "string"
-        ? validated.aiSuggestions
-        : JSON.stringify(validated.aiSuggestions)
-      : JSON.stringify({}),
-    finalDiagnosis: validated.finalDiagnosis || null,
-    status: "PENDING",
-  },
-});
+    let record;
+    if (validated.appointmentId) {
+      record = await prisma.diagnosisRecord.upsert({
+        where: { appointmentId: validated.appointmentId },
+        create: {
+          appointmentId: validated.appointmentId,
+          patientId: validated.patientId,
+          doctorId,
+          symptoms: validated.symptoms,
+          aiSuggestions: validated.aiSuggestions
+            ? typeof validated.aiSuggestions === "string"
+              ? validated.aiSuggestions
+              : JSON.stringify(validated.aiSuggestions)
+            : JSON.stringify({}),
+          finalDiagnosis: validated.finalDiagnosis || null,
+          status: "PENDING",
+        },
+        update: {
+          patientId: validated.patientId,
+          doctorId,
+          symptoms: validated.symptoms,
+          ...(validated.aiSuggestions
+            ? {
+                aiSuggestions:
+                  typeof validated.aiSuggestions === "string"
+                    ? validated.aiSuggestions
+                    : JSON.stringify(validated.aiSuggestions),
+              }
+            : {}),
+          ...(validated.finalDiagnosis !== undefined ? { finalDiagnosis: validated.finalDiagnosis } : {}),
+        },
+      });
+    } else {
+      record = await prisma.diagnosisRecord.create({
+        data: {
+          appointmentId: null,
+          patientId: validated.patientId,
+          doctorId,
+          symptoms: validated.symptoms,
+          aiSuggestions: validated.aiSuggestions
+            ? typeof validated.aiSuggestions === "string"
+              ? validated.aiSuggestions
+              : JSON.stringify(validated.aiSuggestions)
+            : JSON.stringify({}),
+          finalDiagnosis: validated.finalDiagnosis || null,
+          status: "PENDING",
+        },
+      });
+    }
 
     res.status(201).json(record);
   } catch (error: any) {

@@ -218,8 +218,27 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
 
   const selectAppointment = (app: Appointment) => {
     setSelectedApp(app);
-    setSymptomsInput(app.reason);
-    setAiSuggestions(null);
+    setSymptomsInput(app.reason || "");
+    if (app.diagnosisRecord) {
+      setActiveRecordId(app.diagnosisRecord.id);
+      setFinalDiagnosisText(app.diagnosisRecord.finalDiagnosis || "");
+      if (app.diagnosisRecord.aiSuggestions) {
+        try {
+          const parsed = typeof app.diagnosisRecord.aiSuggestions === "string"
+            ? JSON.parse(app.diagnosisRecord.aiSuggestions)
+            : app.diagnosisRecord.aiSuggestions;
+          setAiSuggestions(parsed);
+        } catch (e) {
+          setAiSuggestions(null);
+        }
+      } else {
+        setAiSuggestions(null);
+      }
+    } else {
+      setActiveRecordId(null);
+      setFinalDiagnosisText("");
+      setAiSuggestions(null);
+    }
     if (app.patientId) {
       fetchPatientVitals(app.patientId);
     }
@@ -352,26 +371,33 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
     setAiLoading(true);
     try {
       // 1. Call AI proxy service to get differential diagnosis & recommendations
-      const aiRes = await api.post("/ai/suggestions", {
-        symptoms: symptomsInput,
-        history: selectedApp.notes || "None"
-      });
-      setAiSuggestions(aiRes.data);
+      let aiData: any = null;
+      try {
+        const aiRes = await api.post("/ai/suggestions", {
+          symptoms: symptomsInput.trim(),
+          history: selectedApp.notes || "None"
+        });
+        aiData = aiRes.data;
+        setAiSuggestions(aiData);
+        if (aiData?.differentialDiagnosis && aiData.differentialDiagnosis.length > 0) {
+          setFinalDiagnosisText(aiData.differentialDiagnosis[0].disease);
+        }
+      } catch (aiErr) {
+        console.warn("AI service suggestion failed, continuing with diagnosis flow", aiErr);
+      }
 
-      // 2. Automatically record pending diagnosis entry for this appointment
+      // 2. Automatically record / upsert pending diagnosis entry for this appointment
       const diagRes = await api.post("/diagnosis", {
         appointmentId: selectedApp.id,
         patientId: selectedApp.patientId,
-        symptoms: symptomsInput,
-        aiSuggestions: aiRes.data,
+        symptoms: symptomsInput.trim(),
+        aiSuggestions: aiData || {},
       });
 
       setActiveRecordId(diagRes.data.id);
-      if (aiRes.data.differentialDiagnosis && aiRes.data.differentialDiagnosis.length > 0) {
-        setFinalDiagnosisText(aiRes.data.differentialDiagnosis[0].disease);
-      }
-    } catch (err) {
-      console.error("Failed to run AI support", err);
+    } catch (err: any) {
+      console.error("Failed to run diagnosis support", err);
+      alert(err.response?.data?.error || "Failed to initialize diagnosis record.");
     } finally {
       setAiLoading(false);
     }
@@ -405,19 +431,46 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
 
   const handleConfirmDiagnosis = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeRecordId || !finalDiagnosisText.trim()) return;
+    if (!selectedApp || !finalDiagnosisText.trim()) return;
 
     setConfirmLoading(true);
     try {
-      await api.put(`/diagnosis/${activeRecordId}/confirm`, {
-        finalDiagnosis: finalDiagnosisText,
+      let recordId = activeRecordId;
+
+      // If no active diagnosis record exists yet, create/upsert it first
+      if (!recordId) {
+        const diagRes = await api.post("/diagnosis", {
+          appointmentId: selectedApp.id,
+          patientId: selectedApp.patientId,
+          symptoms: symptomsInput || selectedApp.reason || "General Consultation",
+          aiSuggestions: aiSuggestions || {},
+          finalDiagnosis: finalDiagnosisText.trim(),
+        });
+        recordId = diagRes.data.id;
+        setActiveRecordId(recordId);
+      }
+
+      const confirmRes = await api.put(`/diagnosis/${recordId}/confirm`, {
+        finalDiagnosis: finalDiagnosisText.trim(),
       });
 
       setShowConfirmModal(false);
-      fetchAppointments();
-      alert(`Diagnosis '${finalDiagnosisText}' successfully confirmed! Patient report is now published.`);
-    } catch (err) {
+      await fetchAppointments();
+
+      // Update selectedApp locally with confirmed diagnosis
+      setSelectedApp((prev) => prev ? {
+        ...prev,
+        diagnosisRecord: confirmRes.data.diagnosisRecord || confirmRes.data || {
+          id: recordId,
+          finalDiagnosis: finalDiagnosisText.trim(),
+          status: "CONFIRMED",
+        }
+      } : prev);
+
+      alert(`Diagnosis '${finalDiagnosisText.trim()}' successfully confirmed! Patient clinical report is now published to EHR.`);
+    } catch (err: any) {
       console.error("Failed to confirm diagnosis", err);
+      alert(err.response?.data?.error || "Failed to confirm diagnosis.");
     } finally {
       setConfirmLoading(false);
     }
@@ -778,7 +831,7 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ activeTab }) =
 
                   <button
                     onClick={() => setShowConfirmModal(true)}
-                    disabled={!aiSuggestions}
+                    disabled={!selectedApp}
                     className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white text-xs font-semibold shadow-lg flex items-center space-x-1.5 transition-all disabled:opacity-40"
                   >
                     <CheckCircle2 className="h-4 w-4" />
